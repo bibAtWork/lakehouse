@@ -1,0 +1,29 @@
+# Dagster instance configuration template
+# This file will be processed by envsubst to replace environment variables
+
+run_storage:
+  module: dagster_postgres.run_storage
+  class: PostgresRunStorage
+  config:
+    postgres_url: postgresql://${DAGSTER_POSTGRES_USER}:${DAGSTER_POSTGRES_PASSWORD}@postgres:5432/${DAGSTER_POSTGRES_DB}
+
+event_log_storage:
+  module: dagster_postgres.event_log
+  class: PostgresEventLogStorage
+  config:
+    postgres_url: postgresql://${DAGSTER_POSTGRES_USER}:${DAGSTER_POSTGRES_PASSWORD}@postgres:5432/${DAGSTER_POSTGRES_DB}
+
+schedule_storage:
+  module: dagster_postgres.schedule_storage
+  class: PostgresScheduleStorage
+  config:
+    postgres_url: postgresql://${DAGSTER_POSTGRES_USER}:${DAGSTER_POSTGRES_PASSWORD}@postgres:5432/${DAGSTER_POSTGRES_DB}
+
+run_coordinator:
+  module: dagster.core.run_coordinator
+  class: QueuedRunCoordinator
+  config:
+    max_concurrent_runs: 10
+
+telemetry:
+  enabled: true

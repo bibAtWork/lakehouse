@@ -1,0 +1,51 @@
+# Core Data Engineering
+pyspark==4.0.0
+delta-spark==4.0.0
+dbt-core==1.7.0
+dbt-spark==1.7.0
+dagster==1.5.0
+
+
+# Databricks and Unity Catalog
+databricks-sdk==0.12.0
+databricks-connect==14.0.0
+
+# Data Processing
+pandas==2.1.0
+numpy==1.24.0
+pyarrow==14.0.0
+
+# Database and Storage
+sqlalchemy==2.0.0
+psycopg2-binary==2.9.0
+s3fs==2023.10.0
+
+# Configuration and Environment
+python-dotenv==1.0.0
+pyyaml==6.0.1
+click==8.1.0
+
+# Testing
+pytest==7.4.0
+pytest-spark==0.6.0
+pytest-cov==4.1.0
+
+# Development and Utilities
+jupyter==1.0.0
+ipykernel==6.25.0
+black==23.7.0
+flake8==6.1.0
+mypy==1.5.0
+
+# Monitoring and Logging
+structlog==23.1.0
+prometheus-client==0.17.0
+
+# API and Web
+fastapi==0.103.0
+uvicorn==0.23.0
+requests==2.31.0
+
+# Additional Utilities
+python-dateutil==2.8.2
+pytz==2023.3 

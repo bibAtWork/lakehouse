@@ -1,0 +1,33 @@
+lakehouse:
+  target: dev
+  outputs:
+    dev:
+      type: spark
+      method: thrift
+      host: localhost
+      port: 10000
+      schema: default
+      user: lakehouse
+      threads: 4
+      timeout: 300
+      
+    prod:
+      type: spark
+      method: thrift
+      host: spark-master
+      port: 10000
+      schema: default
+      user: lakehouse
+      threads: 8
+      timeout: 600
+      
+    databricks:
+      type: spark
+      method: databricks
+      host: "{{ env_var('DATABRICKS_HOST') }}"
+      token: "{{ env_var('DATABRICKS_TOKEN') }}"
+      cluster: "{{ env_var('DATABRICKS_CLUSTER_ID') }}"
+      schema: "{{ env_var('UNITY_CATALOG_SCHEMA', 'default') }}"
+      catalog: "{{ env_var('UNITY_CATALOG_CATALOG', 'main') }}"
+      threads: 4
+      timeout: 300 

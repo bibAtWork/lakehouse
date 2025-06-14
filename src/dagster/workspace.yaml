@@ -1,0 +1,7 @@
+# Dagster workspace configuration
+# This file tells the webserver and daemon where to find your code
+
+load_from:
+  - python_file:
+      relative_path: __init__.py
+      working_directory: /opt/dagster/app 
