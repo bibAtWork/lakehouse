@@ -10,6 +10,7 @@ import boto3
 from botocore.config import Config
 from dagster import AssetExecutionContext, MaterializeResult, MetadataValue, asset
 from lakehouse.dedup import deduplicate, summary
+from lakehouse.enrichment import PropertyEnricher
 
 
 def _api(path, **params):
@@ -94,6 +95,11 @@ def screener_silver(context: AssetExecutionContext) -> MaterializeResult:
                            Key=f"bronze/screener/date={day}/listings.jsonl")["Body"].read()
     rows = [json.loads(line) for line in bronze.decode("utf-8").splitlines() if line]
     dataset = deduplicate(rows)
+    enricher = PropertyEnricher(
+        s3, os.environ["S3_BUCKET"],
+        max_new_calls=int(os.environ.get("SCREENER_LLM_MAX_NEW_CALLS", "250")),
+    )
+    dataset["listings"] = [enricher.enrich(row) for row in dataset["listings"]]
     dataset = {"algorithm_version": 1, "snapshot_at": datetime.now(timezone.utc).isoformat(),
                "source_count": dataset["source_count"],
                "unique_count": dataset["unique_count"],
@@ -108,6 +114,7 @@ def screener_silver(context: AssetExecutionContext) -> MaterializeResult:
     return MaterializeResult(metadata={
         "unique_properties": dataset["unique_count"],
         "duplicates": dataset["duplicate_count"],
+        "new_llm_calls": enricher.new_calls,
         "object": MetadataValue.text(key),
     })
 
