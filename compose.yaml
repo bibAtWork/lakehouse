@@ -11,6 +11,7 @@ x-dagster-environment: &dagster-environment
   PYTHONDONTWRITEBYTECODE: "1"
   S3_ENDPOINT: http://seaweedfs:8333
   S3_BUCKET: lakehouse-data
+  SCREENER_API_URL: ${SCREENER_API_URL:-http://host.docker.internal:3000}
 x-dagster-volumes: &dagster-volumes
   - ./src/dagster:/opt/dagster/app/lakehouse:ro
   - ./config/dagster.yaml:/opt/dagster/home/dagster.yaml:ro
