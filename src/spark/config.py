@@ -39,12 +39,12 @@ class SparkConfig:
         self.unity_catalog_metadata_db_port = os.getenv("UNITY_CATALOG_METADATA_DB_PORT", "5432")
         self.unity_catalog_metadata_db_name = os.getenv("UNITY_CATALOG_METADATA_DB_NAME", "lakehouse")
         self.unity_catalog_metadata_db_user = os.getenv("UNITY_CATALOG_METADATA_DB_USER", "lakehouse")
-        self.unity_catalog_metadata_db_password = os.getenv("UNITY_CATALOG_METADATA_DB_PASSWORD", "lakehouse123")
+        self.unity_catalog_metadata_db_password = os.getenv("UNITY_CATALOG_METADATA_DB_PASSWORD")
         
         # Storage configuration
-        self.s3_endpoint = os.getenv("S3_ENDPOINT", "http://localhost:9000")
-        self.s3_access_key = os.getenv("S3_ACCESS_KEY", "minioadmin")
-        self.s3_secret_key = os.getenv("S3_SECRET_KEY", "minioadmin123")
+        self.s3_endpoint = os.getenv("S3_ENDPOINT", "http://seaweedfs-s3.seaweedfs.svc:8333")
+        self.s3_access_key = os.getenv("S3_ACCESS_KEY")
+        self.s3_secret_key = os.getenv("S3_SECRET_KEY")
         self.s3_bucket = os.getenv("S3_BUCKET", "lakehouse-data")
         
         # Environment
@@ -96,7 +96,7 @@ class SparkConfig:
                 "spark.databricks.unityCatalog.schema": self.unity_catalog_schema,
             })
         
-        # Add S3 configuration for MinIO
+        # SeaweedFS provides the cluster's S3-compatible endpoint.
         config.update({
             "spark.hadoop.fs.s3a.endpoint": self.s3_endpoint,
             "spark.hadoop.fs.s3a.access.key": self.s3_access_key,

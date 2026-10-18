@@ -1,28 +1,25 @@
-FROM python:3.10-slim
+FROM python:3.11-slim
 
-# Install Dagster packages and envsubst via pip
-RUN pip install \
-    dagster \
-    dagster-graphql \
-    dagster-webserver \
-    dagster-postgres \
-    dagster-spark \
-    dagster-dbt \
-    envsubst
+RUN pip install --no-cache-dir \
+    dagster==1.13.26 \
+    dagster-webserver==1.13.26 \
+    dagster-postgres==0.29.26 \
+    pandas==2.3.3 \
+    boto3==1.40.58 \
+    psycopg[binary]==3.2.12
 
-# Set DAGSTER_HOME and create directory
-ENV DAGSTER_HOME=/opt/dagster/dagster_home
-RUN mkdir -p $DAGSTER_HOME
+RUN groupadd --gid 1000 lakehouse && useradd --uid 1000 --gid 1000 --create-home lakehouse \
+    && mkdir -p /opt/dagster/dagster_home /opt/dagster/app /tmp/dagster \
+    && chown -R lakehouse:lakehouse /opt/dagster /tmp/dagster
 
-# Copy configuration files from src/dagster
-COPY src/dagster/workspace.yaml $DAGSTER_HOME/
-COPY src/dagster/dagster.yaml.template $DAGSTER_HOME/
+COPY --chown=lakehouse:lakehouse src/dagster/ /opt/dagster/app/lakehouse/
+COPY --chown=lakehouse:lakehouse config/dagster.yaml /opt/dagster/dagster_home/dagster.yaml
+COPY --chown=lakehouse:lakehouse config/workspace.yaml /opt/dagster/dagster_home/workspace.yaml
 
-# Set working directory
-WORKDIR $DAGSTER_HOME
-
-# Expose port
+ENV DAGSTER_HOME=/opt/dagster/dagster_home \
+    PYTHONPATH=/opt/dagster/app \
+    HOME=/home/lakehouse
+WORKDIR /opt/dagster/dagster_home
+USER 1000:1000
 EXPOSE 3000
-
-# Start Dagster
-CMD ["dagster", "dev", "--host", "0.0.0.0", "--port", "3000"] 
+CMD ["dagster-webserver", "-h", "0.0.0.0", "-p", "3000", "-w", "workspace.yaml"]
