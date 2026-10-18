@@ -8,6 +8,7 @@ from datetime import datetime
 import io
 import os
 import boto3
+from botocore.config import Config
 
 
 @asset
@@ -38,6 +39,7 @@ def sample_bronze_data(context: AssetExecutionContext) -> MaterializeResult:
         aws_access_key_id=os.environ["S3_ACCESS_KEY"],
         aws_secret_access_key=os.environ["S3_SECRET_KEY"],
         region_name="us-east-1",
+        config=Config(s3={"addressing_style": "path"}),
     )
     s3.put_object(Bucket=bucket, Key=key, Body=body.getvalue().encode("utf-8"))
     return MaterializeResult(metadata={
