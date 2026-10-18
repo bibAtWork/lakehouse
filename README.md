@@ -18,8 +18,8 @@ The GitHub Actions workflow builds and publishes the Dagster image to GHCR on `m
 ```sh
 kubectl -n lakehouse get pods,svc
 kubectl -n lakehouse get cluster lakehouse-pg
-kubectl -n lakehouse logs deployment/lakehouse-dagster-web
-kubectl -n lakehouse logs deployment/lakehouse-dagster-daemon
+kubectl -n lakehouse logs deployment/lakehouse-dagster -c web
+kubectl -n lakehouse logs deployment/lakehouse-dagster -c daemon
 ```
 
 Dagster is served through the cluster Gateway with Keycloak OIDC and OPA authorization. Keep the SeaweedFS credential and the CloudNativePG application password in Kubernetes Secrets; never put either in this repository.
