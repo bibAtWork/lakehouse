@@ -4,6 +4,7 @@ from collections import Counter, defaultdict
 from decimal import Decimal, InvalidOperation
 from itertools import combinations
 from statistics import median
+import re
 import unicodedata
 
 
@@ -21,6 +22,29 @@ def _text(value):
 def _street(value):
     street = _text(value)
     return street + "asse" if street and street.endswith("str") else street
+
+
+_FULL_ADDRESS = re.compile(
+    r"^\s*(?P<street>[^,\d]+?)\s+(?P<number>\d+\s*[a-zA-Z]?)\s*,\s*"
+    r"(?P<postal>\d{5})\s+(?P<city>[^,]+)(?:,|$)"
+)
+
+
+def clean_record(row):
+    """Fill structured address gaps only from an unambiguous German full address."""
+    result = row.copy()
+    for field in ("title", "city", "postal_code", "street", "house_number"):
+        if isinstance(result.get(field), str):
+            result[field] = result[field].strip() or None
+    match = _FULL_ADDRESS.match(result.get("address_text") or "")
+    if match and (result.get("postal_code") is None or
+                  _text(result["postal_code"]) == _text(match["postal"])) and (
+                      result.get("city") is None or _text(result["city"]) == _text(match["city"])):
+        result["street"] = result.get("street") or match["street"].strip()
+        result["house_number"] = result.get("house_number") or match["number"].replace(" ", "")
+        result["postal_code"] = result.get("postal_code") or match["postal"]
+        result["city"] = result.get("city") or match["city"].strip()
+    return result
 
 
 def _number(value):
@@ -90,6 +114,7 @@ def _tokens(row):
 
 
 def deduplicate(rows):
+    rows = [clean_record(row) for row in rows]
     parents = list(range(len(rows)))
 
     def root(index):

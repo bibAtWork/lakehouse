@@ -53,6 +53,19 @@ class DedupTests(unittest.TestCase):
         result = dedup.deduplicate([row(1, price=None), row(2, price=None)])
         self.assertEqual(result["unique_count"], 2)
 
+    def test_silver_extracts_only_consistent_complete_addresses(self):
+        raw = row(1, city="Berlin", postal_code="12247", street=None, house_number=None,
+                  address_text="Brucknerstraße 49, 12247 Berlin, Lankwitz (Steglitz)")
+        cleaned = dedup.clean_record(raw)
+        self.assertEqual((cleaned["street"], cleaned["house_number"]),
+                         ("Brucknerstraße", "49"))
+        self.assertIsNone(dedup.clean_record({**raw, "postal_code": "10115"})["street"])
+        self.assertIsNone(dedup.clean_record({**raw, "address_text": "12247 Berlin"})["street"])
+        other = row(2, city="Berlin", postal_code="12247", street="Brucknerstr.",
+                    house_number="49", title="Other", living_area_m2=None,
+                    plot_area_m2=None, build_year=None)
+        self.assertEqual(dedup.deduplicate([raw, other])["unique_count"], 1)
+
 
 if __name__ == "__main__":
     unittest.main()
