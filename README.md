@@ -2,6 +2,14 @@
 
 This repository contains the Dagster asset code and configuration for the homelab lakehouse. [Edge_GitOps](https://github.com/bibAtWork/Edge_GitOps) deploys it with Flux into the `lakehouse` Kubernetes namespace. Dagster orchestrates assets, CloudNativePG stores run metadata, and SeaweedFS provides the `lakehouse-data` S3 bucket for datasets. The `sample_bronze_data` asset writes a CSV to `s3://lakehouse-data/bronze/sample_data.csv`.
 
+The daily real-estate pipeline consumes records already produced by the real-estate screener:
+
+- **Bronze**: `screener_bronze` pages the screener's read-only BI export and stores raw source listings in `bronze/screener/date=YYYY-MM-DD/listings.jsonl`.
+- **Silver**: `screener_silver` normalizes the five matching attributes and groups listings with exactly equal asking prices when either complete logical addresses match or at least three populated attributes match. It stores canonical properties, all source identities and the match evidence in `silver/screener/date=YYYY-MM-DD/properties.json`. Missing values never count as equal; known conflicting city/postcode values prevent a location match.
+- **Gold**: `screener_gold` stores aggregate KPI objects in `gold/screener/date=YYYY-MM-DD/kpis.json` and `gold/screener/current.json`, and publishes daily aggregate samples to VictoriaMetrics for the Grafana BI dashboard. No property address or URL is used as a metric label.
+
+The `screener_bi_refresh` schedule runs at 04:00 UTC. The screener remains the sole property-site collector. The lakehouse keeps dated snapshots so BI history does not depend on the metrics retention window.
+
 The `src/spark` and `src/dbt` directories contain exploratory examples for future pipelines.
 
 ## Local testing
@@ -14,6 +22,8 @@ docker compose exec dagster-daemon dagster asset materialize -m lakehouse --sele
 ```
 
 Open Dagster at <http://localhost:3333>. Stop the stack with `docker compose down`; use `docker compose down -v` to discard its local database and S3 data.
+
+Set `SCREENER_API_URL` in `.env` when testing the real-estate assets against a local screener. The default is `http://host.docker.internal:3000`. `VM_IMPORT_URL` is optional locally; the cluster sets it to VictoriaMetrics' import endpoint. Run `python -m unittest discover -s tests` to check the matching rules without a running cluster.
 
 ## Source delivery
 

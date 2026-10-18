@@ -9,6 +9,8 @@ configMapGenerator:
       - package_init.py=src/dagster/__init__.py
       - assets_init.py=src/dagster/assets/__init__.py
       - bronze.py=src/dagster/assets/bronze.py
+      - screener.py=src/dagster/assets/screener.py
+      - dedup.py=src/dagster/dedup.py
   - name: lakehouse-dagster-config
     files:
       - dagster.yaml=config/dagster.yaml
