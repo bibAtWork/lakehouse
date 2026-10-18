@@ -59,11 +59,15 @@ class EnrichmentTests(unittest.TestCase):
         self.assertEqual(len(values), 12)
 
     def test_ambiguous_or_inferred_facts_remain_unknown(self):
-        text = "Baujahr: 1980. Baujahr: 1990. Heizkosten: 100 kWh. Vor der Wohnung steht ein Haus."
+        text = ("Baujahr: 1980. Baujahr: 1990. Heizkosten: 100 kWh. "
+                "Endenergieverbrauch: 100 kWh/m². "
+                "Primärer Energieträger: Gas und Öl. Vor der Wohnung steht ein Haus.")
         values = enrichment.validated_facts(text, {"facts": [
             fact("build_year", "1980", "Baujahr: 1980"),
             fact("build_year", "1990", "Baujahr: 1990"),
             fact("end_energy_consumption_kwh_m2a", "100", "Heizkosten: 100 kWh"),
+            fact("end_energy_consumption_kwh_m2a", "100", "Endenergieverbrauch: 100 kWh/m²"),
+            fact("primary_energy_carrier", "Gas", "Primärer Energieträger: Gas und Öl"),
             fact("property_type", "detached_house", "Wohnung"),
             fact("street", "Hauptstraße", "Vor der Wohnung steht ein Haus"),
         ]})

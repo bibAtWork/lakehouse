@@ -13,7 +13,7 @@ from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 DEFAULT_MODEL = "gemini-3.5-flash-lite"
 API_URL = "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
 PROPERTY_TYPES = {
@@ -117,7 +117,7 @@ def _validate_fact(field, value, quote):
                 stated = next(_numbers(match.group(1)), None) if match else None
             return number if number <= 100 and stated == number else None
         stated = _labeled_number(quote, r"endenergieverbrauch|energieverbrauchskennwert")
-        unit = re.search(r"kwh\s*(?:/\s*\(?|\(\s*)m[²2]", lower)
+        unit = re.search(r"kwh\s*(?:/|\()\s*\(?\s*m[²2]\s*(?:[*/·]\s*)?(?:a|jahr)\b", lower)
         return number if stated == number and unit else None
     if field == "energy_class":
         upper = value.upper()
@@ -125,8 +125,14 @@ def _validate_fact(field, value, quote):
             re.search(r"energie(?:effizienz)?klasse|effizienzklasse", lower) and
             re.search(rf"(?<!\w){re.escape(upper)}(?!\w)", quote, re.I)) else None
     if field == "primary_energy_carrier":
-        return value if len(value) <= 80 and value.casefold() in lower and re.search(
-            r"(?:wesentlicher|primärer|primaerer)\s+energieträger", lower) else None
+        match = re.search(r"(?:wesentlicher|primärer|primaerer)\s+energieträger\s*:\s*([^.;\n]+)",
+                          quote, re.I)
+        if not match:
+            return None
+        stated = match.group(1).strip()
+        if re.search(r"[,/]|\b(?:und|sowie)\b", stated, re.I):
+            return None
+        return stated if len(stated) <= 80 and value.casefold() == stated.casefold() else None
     if field in {"street", "house_number", "postal_code", "city"}:
         if not re.search(r"objektadresse|adresse\s+des\s+objekts|anschrift\s+des\s+objekts", lower):
             return None
