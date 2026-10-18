@@ -10,9 +10,17 @@ import unicodedata
 def _text(value):
     if value is None:
         return None
-    folded = unicodedata.normalize("NFKD", str(value).replace("ß", "ss").casefold())
+    german = str(value).casefold().translate(str.maketrans({
+        "ä": "ae", "ö": "oe", "ü": "ue", "ß": "ss",
+    }))
+    folded = unicodedata.normalize("NFKD", german)
     result = "".join(char for char in folded if char.isalnum() and not unicodedata.combining(char))
     return result or None
+
+
+def _street(value):
+    street = _text(value)
+    return street + "asse" if street and street.endswith("str") else street
 
 
 def _number(value):
@@ -40,9 +48,10 @@ def match_reason(left, right):
     price = _number(left.get("price"))
     if price is None or price != _number(right.get("price")):
         return None
-    if all(_text(left.get(field)) is not None and
-           _text(left.get(field)) == _text(right.get(field))
-           for field in ("city", "street", "house_number")):
+    if all(normalizer(left.get(field)) is not None and
+           normalizer(left.get(field)) == normalizer(right.get(field))
+           for field, normalizer in (("city", _text), ("street", _street),
+                                     ("house_number", _text))):
         return "address"
     equal = (
         _text(left.get("title")) is not None and _text(left.get("title")) == _text(right.get("title")),
@@ -61,7 +70,8 @@ def _tokens(row):
     price = _number(row.get("price"))
     if price is None:
         return []
-    city, street, house = (_text(row.get(field)) for field in ("city", "street", "house_number"))
+    city, street, house = (_text(row.get("city")), _street(row.get("street")),
+                           _text(row.get("house_number")))
     tokens = [(price, "address", city, street, house)] if all((city, street, house)) else []
     attributes = {
         "title": [_text(row.get("title"))],

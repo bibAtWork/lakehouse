@@ -24,6 +24,10 @@ class DedupTests(unittest.TestCase):
                     living_area_m2=None, plot_area_m2=None, build_year=None)
         self.assertEqual(dedup.match_reason(left, right), "address")
         self.assertIsNone(dedup.match_reason(left, {**right, "price": "399999"}))
+        self.assertEqual(dedup.match_reason(
+            row(3, city="Düsseldorf", street="Hauptstr.", house_number="12"),
+            row(4, city="Duesseldorf", street="Hauptstraße", house_number="12")),
+            "address")
 
     def test_three_populated_attributes_and_location_conflicts(self):
         self.assertEqual(dedup.match_reason(row(1), row(2, title="Other", plot_area_m2=None)),
