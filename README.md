@@ -4,14 +4,11 @@ The running lakehouse is deployed by Flux from [Edge_GitOps](https://github.com/
 
 The first working slice is Dagster with CloudNativePG for run metadata and SeaweedFS for dataset objects. The `sample_bronze_data` asset writes a CSV to `s3://lakehouse-data/bronze/sample_data.csv`. The old Spark, dbt, Delta Lake, and Unity Catalog files are prototypes; they are not connected to Dagster or deployed yet. In particular, the old Databricks-style Spark settings do not provide Unity Catalog integration with open-source Spark.
 
-## Build and verify
+## Source delivery
 
-```sh
-docker build -f Dockerfile.dagster -t lakehouse-dagster:dev .
-docker run --rm lakehouse-dagster:dev python -c 'from lakehouse import defs; print([a.key.to_user_string() for a in defs.assets])'
-```
+The cluster uses the upstream `dagster/dagster-k8s` image. Flux reads this repository at a commit pinned in Edge_GitOps and builds the two ConfigMaps declared by `kustomization.yaml`. Kubernetes mounts those ConfigMaps as the Dagster code location and instance configuration. No project-specific image is built or published.
 
-The GitHub Actions workflow builds and publishes the Dagster image to GHCR on `main` pushes. The GitOps deployment pins a published digest. To add an asset, edit `src/dagster/assets`, validate the image, then update that digest in Edge_GitOps.
+To add an asset, edit `src/dagster/assets` and list its file under `lakehouse-code` in `kustomization.yaml`. After merging it here, update the source commit pin in Edge_GitOps. Reloader restarts Dagster when the ConfigMap changes. Renovate tracks the upstream Dagster image tag in Edge_GitOps.
 
 ## Operational checks
 
