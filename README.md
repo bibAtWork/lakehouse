@@ -4,6 +4,17 @@ This repository contains the Dagster asset code and configuration for the homela
 
 The `src/spark` and `src/dbt` directories contain exploratory examples for future pipelines.
 
+## Local testing
+
+Docker Compose starts the upstream Dagster image, PostgreSQL, and SeaweedFS with a local `lakehouse-data` bucket. It mounts the Dagster source and configuration from this checkout. The S3 API and Dagster UI listen on localhost; Compose uses development-only credentials from `env.example` by default. Copy that file to `.env` to override the credentials or host ports. Renovate's Docker Compose manager tracks the upstream image references in `compose.yaml`.
+
+```sh
+docker compose up -d --wait
+docker compose exec dagster-daemon dagster asset materialize -m lakehouse --select sample_bronze_data
+```
+
+Open Dagster at <http://localhost:3333>. Stop the stack with `docker compose down`; use `docker compose down -v` to discard its local database and S3 data.
+
 ## Source delivery
 
 The cluster uses the upstream `dagster/dagster-k8s` image. Flux reads this repository at a commit pinned in Edge_GitOps and builds the two ConfigMaps declared by `kustomization.yaml`. Kubernetes mounts those ConfigMaps as the Dagster code location and instance configuration.

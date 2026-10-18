@@ -1,0 +1,122 @@
+name: lakehouse-local
+
+x-s3-credentials: &s3-credentials
+  S3_ACCESS_KEY: ${S3_ACCESS_KEY:-local-lakehouse}
+  S3_SECRET_KEY: ${S3_SECRET_KEY:-local-lakehouse-secret}
+x-dagster-environment: &dagster-environment
+  <<: *s3-credentials
+  DAGSTER_HOME: /opt/dagster/home
+  DAGSTER_POSTGRES_URL: postgresql://dagster:local-dagster-password@postgres:5432/dagster
+  PYTHONPATH: /opt/dagster/app
+  PYTHONDONTWRITEBYTECODE: "1"
+  S3_ENDPOINT: http://seaweedfs:8333
+  S3_BUCKET: lakehouse-data
+x-dagster-volumes: &dagster-volumes
+  - ./src/dagster:/opt/dagster/app/lakehouse:ro
+  - ./config/dagster.yaml:/opt/dagster/home/dagster.yaml:ro
+  - ./config/workspace.yaml:/opt/dagster/home/workspace.yaml:ro
+  - dagster-storage:/opt/dagster/home/storage
+
+services:
+  postgres:
+    image: docker.io/library/postgres:16.15-alpine
+    environment:
+      POSTGRES_USER: dagster
+      POSTGRES_PASSWORD: local-dagster-password
+      POSTGRES_DB: dagster
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: [CMD-SHELL, "pg_isready -U dagster -d dagster"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+
+  seaweed-s3-config:
+    image: docker.io/dagster/dagster-k8s:1.13.26@sha256:5ef3242241bad35772a3ede72e4789629ee7960f006ddc58716216112c833587
+    entrypoint: [python3, -c]
+    command:
+      - |
+        import json, os
+        config = {"identities": [{"name": "local-lakehouse", "credentials": [{"accessKey": os.environ["S3_ACCESS_KEY"], "secretKey": os.environ["S3_SECRET_KEY"]}], "actions": ["Admin", "Read", "List", "Write"]}]}
+        with open("/seaweed-config/s3.json", "w", encoding="utf-8") as output:
+            json.dump(config, output)
+    environment: *s3-credentials
+    volumes:
+      - seaweed-config:/seaweed-config
+    restart: "no"
+
+  seaweedfs:
+    image: docker.io/chrislusf/seaweedfs:4.48
+    command: server -s3 -filer -ip=seaweedfs -ip.bind=0.0.0.0 -dir=/data -s3.config=/seaweed-config/s3.json -master.volumeSizeLimitMB=128
+    ports:
+      - "127.0.0.1:${SEAWEED_S3_PORT:-8333}:8333"
+    volumes:
+      - seaweed-data:/data
+      - seaweed-config:/seaweed-config:ro
+    depends_on:
+      seaweed-s3-config:
+        condition: service_completed_successfully
+    healthcheck:
+      test: [CMD, curl, -fsS, "http://localhost:9333/cluster/healthz"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 10s
+
+  bucket-init:
+    image: docker.io/dagster/dagster-k8s:1.13.26@sha256:5ef3242241bad35772a3ede72e4789629ee7960f006ddc58716216112c833587
+    entrypoint: [python3, -c]
+    command:
+      - |
+        import boto3, os
+        from botocore.config import Config
+        client = boto3.client("s3", endpoint_url=os.environ["S3_ENDPOINT"], aws_access_key_id=os.environ["S3_ACCESS_KEY"], aws_secret_access_key=os.environ["S3_SECRET_KEY"], region_name="us-east-1", config=Config(s3={"addressing_style": "path"}))
+        bucket = os.environ["S3_BUCKET"]
+        if bucket not in [item["Name"] for item in client.list_buckets()["Buckets"]]:
+            client.create_bucket(Bucket=bucket)
+    environment: *dagster-environment
+    depends_on:
+      seaweedfs:
+        condition: service_healthy
+    restart: "no"
+
+  dagster-webserver:
+    image: docker.io/dagster/dagster-k8s:1.13.26@sha256:5ef3242241bad35772a3ede72e4789629ee7960f006ddc58716216112c833587
+    entrypoint: [dagster-webserver]
+    command: [-h, 0.0.0.0, -p, "3000", -w, workspace.yaml]
+    working_dir: /opt/dagster/home
+    environment: *dagster-environment
+    volumes: *dagster-volumes
+    ports:
+      - "127.0.0.1:${DAGSTER_PORT:-3333}:3000"
+    healthcheck:
+      test: [CMD, python3, -c, "import urllib.request; urllib.request.urlopen('http://127.0.0.1:3000/', timeout=3)"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 10s
+    depends_on:
+      postgres:
+        condition: service_healthy
+      bucket-init:
+        condition: service_completed_successfully
+
+  dagster-daemon:
+    image: docker.io/dagster/dagster-k8s:1.13.26@sha256:5ef3242241bad35772a3ede72e4789629ee7960f006ddc58716216112c833587
+    entrypoint: [dagster-daemon]
+    command: [run]
+    working_dir: /opt/dagster/home
+    environment: *dagster-environment
+    volumes: *dagster-volumes
+    depends_on:
+      postgres:
+        condition: service_healthy
+      bucket-init:
+        condition: service_completed_successfully
+
+volumes:
+  postgres-data:
+  seaweed-data:
+  seaweed-config:
+  dagster-storage:

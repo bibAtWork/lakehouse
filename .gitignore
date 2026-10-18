@@ -60,6 +60,7 @@ data/curated/
 *.delta
 *.csv
 *.json
+!/renovate.json
 
 # Logs
 *.log
@@ -94,4 +95,4 @@ htmlcov/
 .databricks/
 
 # Unity Catalog
-unity_catalog_cache/ 
+unity_catalog_cache/
