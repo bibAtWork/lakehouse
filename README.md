@@ -1,138 +1,25 @@
-# Lakehouse Data Engineering Project
+# Lakehouse
 
-A comprehensive data engineering project demonstrating the integration of:
-- **PySpark 4.0** - Distributed data processing
-- **dbt** - Data transformation and modeling
-- **Delta Lake** - ACID transactions and schema evolution
-- **Unity Catalog** - Centralized metadata management (local or cloud)
-- **Dagster** - Data orchestration and workflow management
+The running lakehouse is deployed by Flux from [Edge_GitOps](https://github.com/bibAtWork/Edge_GitOps) into the `lakehouse` Kubernetes namespace. It uses the cluster's existing SeaweedFS S3 endpoint and a dedicated `lakehouse-data` bucket. There is no MinIO instance or Docker Compose deployment.
 
+The first working slice is Dagster with CloudNativePG for run metadata and SeaweedFS for dataset objects. The `sample_bronze_data` asset writes a CSV to `s3://lakehouse-data/bronze/sample_data.csv`. The old Spark, dbt, Delta Lake, and Unity Catalog files are prototypes; they are not connected to Dagster or deployed yet. In particular, the old Databricks-style Spark settings do not provide Unity Catalog integration with open-source Spark.
 
-## Prerequisites
+## Build and verify
 
-- Python 3.9+
-- Docker and Docker Compose
-- dbt CLI
-
-## Quick Start
-
-1. **Clone and setup the project:**
-   ```bash
-   git clone <repository-url>
-   cd lakehouse
-   # Edit .env with your configuration
-   ```
-
-2. **Install dependencies:**
-   ```bash
-   pip install -r requirements.txt
-   ```
-
-3. **Start services:**
-   ```bash
-   docker-compose up -d
-   ```
-
-4. **Initialize dbt:**
-   ```bash
-   cd src/dbt
-   dbt deps
-   dbt seed
-   dbt run
-   ```
-
-5. **Start Dagster:**
-   ```bash
-   dagster dev
-   ```
-
-## Features
-
-### Data Ingestion
-- PySpark jobs for batch data ingestion
-- Delta Lake format for ACID transactions
-- Unity Catalog for metadata management (local or cloud)
-
-### Data Transformation
-- dbt models for SQL-based transformations
-- Incremental processing
-- Data quality tests
-
-### Orchestration
-- Dagster pipelines for workflow management
-- Asset-based data lineage
-- Monitoring and alerting
-
-### Data Lake Architecture
-- Bronze (raw data)
-- Silver (cleaned/validated data)
-- Gold (business-ready data)
-
-### Unity Catalog Integration
-- **Local Deployment**: Run Unity Catalog locally using Docker containers
-- **Cloud Deployment**: Use Databricks Unity Catalog for production
-- Centralized metadata management and governance
-- Data lineage tracking
-- Schema evolution management
-
-## Configuration
-
-### Environment Variables
-- `DEPLOYMENT_MODE` - Set to 'local' or 'databricks'
-- `SPARK_MASTER_URL` - Spark cluster URL
-- `UNITY_CATALOG_HOST` - Unity Catalog service URL (local: http://localhost:8081)
-- `UNITY_CATALOG_CATALOG` - Unity Catalog catalog name
-- `UNITY_CATALOG_SCHEMA` - Unity Catalog schema name
-
-### Local Unity Catalog Setup
-The project includes a local Unity Catalog deployment using Docker:
-- Runs on port 8081
-- Uses PostgreSQL for metadata storage
-- Provides the same functionality as cloud Unity Catalog
-- Perfect for development and testing
-
-### Databricks Unity Catalog Setup (Optional)
-1. Configure Unity Catalog in your Databricks workspace
-2. Create catalog and schema
-3. Set up proper permissions
-4. Update configuration files
-
-## Development
-
-### Running Tests
-```bash
-# Run dbt tests
-cd src/dbt && dbt test
-
-# Run PySpark tests
-python -m pytest tests/
-
-# Run Dagster tests
-dagster asset materialize --select "*"
+```sh
+docker build -f Dockerfile.dagster -t lakehouse-dagster:dev .
+docker run --rm lakehouse-dagster:dev python -c 'from lakehouse import defs; print([a.key.to_user_string() for a in defs.assets])'
 ```
 
-### Adding New Data Sources
-1. Create ingestion job in `src/spark/jobs/`
-2. Add dbt models in `src/dbt/models/`
-3. Create Dagster assets in `src/dagster/assets/`
-4. Update pipeline in `src/dagster/jobs/`
+The GitHub Actions workflow builds and publishes the Dagster image to GHCR on `main` pushes. The GitOps deployment pins a published digest. To add an asset, edit `src/dagster/assets`, validate the image, then update that digest in Edge_GitOps.
 
-## Monitoring
+## Operational checks
 
-- Dagster UI: http://localhost:3000
-- Spark UI: http://localhost:8080
-- Unity Catalog UI: http://localhost:8081
-- MinIO Console: http://localhost:9001
-- dbt docs: `dbt docs generate && dbt docs serve`
+```sh
+kubectl -n lakehouse get pods,svc
+kubectl -n lakehouse get cluster lakehouse-pg
+kubectl -n lakehouse logs deployment/lakehouse-dagster-web
+kubectl -n lakehouse logs deployment/lakehouse-dagster-daemon
+```
 
-## Contributing
-
-1. Fork the repository
-2. Create a feature branch
-3. Make your changes
-4. Add tests
-5. Submit a pull request
-
-## License
-
-MIT License - see LICENSE file for details 
+Dagster is served through the cluster Gateway with Keycloak OIDC and OPA authorization. Keep the SeaweedFS credential and the CloudNativePG application password in Kubernetes Secrets; never put either in this repository.
