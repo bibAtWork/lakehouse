@@ -84,7 +84,8 @@ class EnrichmentTests(unittest.TestCase):
 
         enricher = enrichment.PropertyEnricher(s3, "lakehouse-data", api_key="test-key",
                                                model_call=model_call)
-        row = {"description": DESCRIPTION, "build_year": 1999}
+        row = {"description": DESCRIPTION, "last_detail_success_at": "2026-10-19T17:00:00Z",
+               "build_year": 1999}
         first = enricher.enrich(row)
         second = enricher.enrich(row)
         self.assertEqual(first["build_year"], 1999)
@@ -98,11 +99,20 @@ class EnrichmentTests(unittest.TestCase):
         s3 = MemoryS3()
         without_key = enrichment.PropertyEnricher(s3, "bucket", api_key="", model_call=lambda *_: {})
         with self.assertRaisesRegex(RuntimeError, "GEMINI_API_KEY"):
-            without_key.enrich({"description": DESCRIPTION})
+            without_key.enrich({"description": DESCRIPTION, "last_detail_success_at": "2026-10-19T17:00:00Z"})
         limited = enrichment.PropertyEnricher(s3, "bucket", api_key="test", max_new_calls=0,
                                               model_call=lambda *_: {})
         with self.assertRaisesRegex(RuntimeError, "new-call budget"):
-            limited.enrich({"description": DESCRIPTION})
+            limited.enrich({"description": DESCRIPTION, "last_detail_success_at": "2026-10-19T17:00:00Z"})
+
+    def test_search_excerpt_is_not_sent_to_the_model(self):
+        calls = []
+        enricher = enrichment.PropertyEnricher(MemoryS3(), "bucket", api_key="test",
+                                               model_call=lambda *_: calls.append(True))
+        row = {"description": "Search preview only", "last_detail_success_at": None}
+        self.assertIs(enricher.enrich(row), row)
+        self.assertEqual(calls, [])
+        self.assertEqual(enricher.new_calls, 0)
 
 
 if __name__ == "__main__":
