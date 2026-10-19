@@ -201,7 +201,9 @@ class PropertyEnricher:
 
     def enrich(self, row):
         description = row.get("description")
-        if not isinstance(description, str) or not description.strip():
+        # Search-only text can be a portal excerpt. Only a successful detail
+        # fetch establishes that the screener retained the page description.
+        if not row.get("last_detail_success_at") or not isinstance(description, str) or not description.strip():
             return row
         digest = hashlib.sha256(description.encode("utf-8")).hexdigest()
         key = (f"silver/screener/enrichment-cache/v{SCHEMA_VERSION}/"
