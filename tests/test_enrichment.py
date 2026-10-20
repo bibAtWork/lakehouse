@@ -127,15 +127,29 @@ class EnrichmentTests(unittest.TestCase):
         self.assertEqual(len(calls), 1)
         self.assertEqual(enricher.new_calls, 1)
 
-    def test_missing_key_and_budget_fail_before_partial_silver_write(self):
+    def test_missing_key_fails_but_budget_skips_uncached_descriptions(self):
         s3 = MemoryS3()
         without_key = enrichment.PropertyEnricher(s3, "bucket", api_key="", model_call=lambda *_: {})
         with self.assertRaisesRegex(RuntimeError, "GEMINI_API_KEY"):
             without_key.enrich({"description": DESCRIPTION, "last_detail_success_at": "2026-10-19T17:00:00Z"})
+        calls = []
         limited = enrichment.PropertyEnricher(s3, "bucket", api_key="test", max_new_calls=0,
-                                              model_call=lambda *_: {})
-        with self.assertRaisesRegex(RuntimeError, "new-call budget"):
-            limited.enrich({"description": DESCRIPTION, "last_detail_success_at": "2026-10-19T17:00:00Z"})
+                                              model_call=lambda *_: calls.append(True))
+        row = {"description": DESCRIPTION, "last_detail_success_at": "2026-10-19T17:00:00Z"}
+        self.assertEqual(limited.enrich(row), row)
+        self.assertEqual(limited.budget_skipped, 1)
+        self.assertEqual(calls, [])
+
+    def test_wall_clock_budget_bounds_daily_enrichment_latency(self):
+        calls = []
+        enricher = enrichment.PropertyEnricher(
+            MemoryS3(), "bucket", api_key="test", max_elapsed_seconds=0,
+            model_call=lambda *_: calls.append(True),
+        )
+        row = {"description": DESCRIPTION, "last_detail_success_at": "2026-10-19T17:00:00Z"}
+        self.assertEqual(enricher.enrich(row), row)
+        self.assertEqual(enricher.time_skipped, 1)
+        self.assertEqual(calls, [])
 
     def test_search_excerpt_is_not_sent_to_the_model(self):
         calls = []
