@@ -194,7 +194,8 @@ def _gemini_facts(description, api_key, model):
 
 
 class PropertyEnricher:
-    def __init__(self, s3, bucket, api_key=None, model=None, max_new_calls=250, model_call=None):
+    def __init__(self, s3, bucket, api_key=None, model=None, max_new_calls=250,
+                 max_elapsed_seconds=300, model_call=None):
         self.s3 = s3
         self.bucket = bucket
         self.api_key = api_key if api_key is not None else os.environ.get("GEMINI_API_KEY")
@@ -203,6 +204,10 @@ class PropertyEnricher:
         self.new_calls = 0
         self.quota_exhausted = False
         self.quota_skipped = 0
+        self.budget_skipped = 0
+        self.max_elapsed_seconds = max_elapsed_seconds
+        self.started_at = time.monotonic()
+        self.time_skipped = 0
         self.model_call = model_call or _gemini_facts
         if not re.fullmatch(r"[a-zA-Z0-9_.-]+", self.model):
             raise ValueError("Invalid model identifier")
@@ -229,7 +234,11 @@ class PropertyEnricher:
                 self.quota_skipped += 1
                 return row
             if self.new_calls >= self.max_new_calls:
-                raise RuntimeError("Silver enrichment reached its new-call budget") from None
+                self.budget_skipped += 1
+                return row
+            if time.monotonic() - self.started_at >= self.max_elapsed_seconds:
+                self.time_skipped += 1
+                return row
             self.new_calls += 1
             try:
                 facts = validated_facts(description, self.model_call(description, self.api_key, self.model))

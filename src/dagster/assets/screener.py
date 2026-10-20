@@ -42,6 +42,8 @@ def _publish_metrics(summary_data):
         "duplicate_listings": summary_data["duplicate_listings"],
         "duplicate_rate": summary_data["duplicate_rate"],
         "llm_quota_skipped_properties": summary_data["llm_quota_skipped_properties"],
+        "llm_budget_skipped_properties": summary_data["llm_budget_skipped_properties"],
+        "llm_time_skipped_properties": summary_data["llm_time_skipped_properties"],
         "priced_properties": summary_data["priced_properties"],
         "median_price_eur": summary_data["median_price_eur"],
         "median_price_per_sqm_eur": summary_data["median_price_per_sqm_eur"],
@@ -114,6 +116,7 @@ def screener_silver(context: AssetExecutionContext) -> MaterializeResult:
     enricher = PropertyEnricher(
         s3, os.environ["S3_BUCKET"],
         max_new_calls=int(os.environ.get("SCREENER_LLM_MAX_NEW_CALLS", "250")),
+        max_elapsed_seconds=int(os.environ.get("SCREENER_LLM_MAX_SECONDS", "300")),
     )
     dataset["listings"] = [enricher.enrich(row) for row in dataset["listings"]]
     dataset = {"algorithm_version": 1, "snapshot_at": datetime.now(timezone.utc).isoformat(),
@@ -121,6 +124,8 @@ def screener_silver(context: AssetExecutionContext) -> MaterializeResult:
                "unique_count": dataset["unique_count"],
                "duplicate_count": dataset["duplicate_count"],
                "llm_quota_skipped_properties": enricher.quota_skipped,
+               "llm_budget_skipped_properties": enricher.budget_skipped,
+               "llm_time_skipped_properties": enricher.time_skipped,
                "listings": dataset["listings"],
                "match_evidence": dataset["match_evidence"]}
     key = f"silver/screener/date={day}/properties.json"
@@ -131,11 +136,19 @@ def screener_silver(context: AssetExecutionContext) -> MaterializeResult:
     if enricher.quota_skipped:
         context.log.warning("Gemini quota exhausted; %s properties retained without new enrichment",
                             enricher.quota_skipped)
+    if enricher.budget_skipped:
+        context.log.warning("Silver new-call budget exhausted; %s properties retained without new enrichment",
+                            enricher.budget_skipped)
+    if enricher.time_skipped:
+        context.log.warning("Silver time budget exhausted; %s properties retained without new enrichment",
+                            enricher.time_skipped)
     return MaterializeResult(metadata={
         "unique_properties": dataset["unique_count"],
         "duplicates": dataset["duplicate_count"],
         "new_llm_calls": enricher.new_calls,
         "llm_quota_skipped_properties": enricher.quota_skipped,
+        "llm_budget_skipped_properties": enricher.budget_skipped,
+        "llm_time_skipped_properties": enricher.time_skipped,
         "object": MetadataValue.text(key),
     })
 

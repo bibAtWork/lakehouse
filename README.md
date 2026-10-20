@@ -22,11 +22,12 @@ The fetched detail description is sent to Google's Gemini API when no cached res
 The model response is validated against exact quotes in that description; model JSON
 shape alone does not establish factual correctness. Successful results are cached by
 description SHA-256, model and schema version in SeaweedFS, avoiding repeat API calls
-for unchanged text. `SCREENER_LLM_MAX_NEW_CALLS` defaults to 250 per run. If Gemini
-returns HTTP 429 after bounded retries, Silver preserves the source fields for uncached
-properties and publishes the snapshot; Dagster metadata and a Gold metric report how
-many properties skipped enrichment. Other API failures, missing credentials or an
-exhausted call budget fail Silver before publishing a new dataset. The cache and Silver evidence
+for unchanged text. `SCREENER_LLM_MAX_NEW_CALLS` defaults to 250 per run and
+`SCREENER_LLM_MAX_SECONDS` to 300 seconds; an in-flight request may extend the latter
+by its timeout. If Gemini returns HTTP 429 after bounded retries or either budget is exhausted, Silver
+preserves the source fields for uncached properties and publishes the snapshot; Dagster
+metadata and Gold metrics report how many properties skipped enrichment for each reason.
+Other API failures or missing credentials fail Silver before publishing a new dataset. The cache and Silver evidence
 contain quoted property text and share the `lakehouse-data` bucket's access controls.
 
 The `src/spark` and `src/dbt` directories contain exploratory examples for future pipelines.

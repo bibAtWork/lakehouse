@@ -225,6 +225,8 @@ def summary(dataset, as_of=None):
         "duplicate_rate": dataset["duplicate_count"] / dataset["source_count"]
         if dataset["source_count"] else 0,
         "llm_quota_skipped_properties": dataset.get("llm_quota_skipped_properties", 0),
+        "llm_budget_skipped_properties": dataset.get("llm_budget_skipped_properties", 0),
+        "llm_time_skipped_properties": dataset.get("llm_time_skipped_properties", 0),
         "priced_properties": len(priced),
         "median_price_eur": float(median([_number(row["price"]) for row in priced])) if priced else None,
         "median_price_per_sqm_eur": float(median(per_sqm)) if per_sqm else None,
