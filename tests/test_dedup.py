@@ -18,6 +18,17 @@ def row(listing_id, **changes):
 
 
 class DedupTests(unittest.TestCase):
+    def test_given_manual_history_when_summarizing_then_current_inventory_stays_current(self):
+        archive = row(1, first_seen_at="2026-01-02T10:00:00Z", manual_import=True,
+                      price="300000", living_area_m2="100")
+        current = row(2, first_seen_at="2026-10-19T10:00:00Z", manual_import=False,
+                      title="Another", price="600000", living_area_m2="100")
+        active, history = dedup.split_current_and_history([archive, current])
+        self.assertEqual(dedup.summary(dedup.deduplicate(active))["source_listings"], 1)
+        cohorts = dedup.summary(dedup.deduplicate(history))
+        self.assertEqual([part["month"] for part in cohorts["average_price_per_sqm_by_month"]],
+                         ["2026-01", "2026-10"])
+
     def test_full_logical_address_and_exact_price(self):
         left = row(1, street="Hauptstraße", house_number="12 A", title=None)
         right = row(2, street="Hauptstrasse", house_number="12a", title=None,

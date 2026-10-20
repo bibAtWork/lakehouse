@@ -9,7 +9,7 @@ from urllib.request import Request, urlopen
 import boto3
 from botocore.config import Config
 from dagster import AssetExecutionContext, MaterializeResult, MetadataValue, asset
-from lakehouse.dedup import deduplicate, summary
+from lakehouse.dedup import deduplicate, split_current_and_history, summary
 from lakehouse.enrichment import PropertyEnricher
 
 
@@ -32,7 +32,7 @@ def _s3():
     )
 
 
-def _publish_metrics(summary_data):
+def _publish_metrics(summary_data, history_data=None):
     endpoint = os.environ.get("VM_IMPORT_URL")
     if not endpoint:
         return
@@ -75,6 +75,17 @@ def _publish_metrics(summary_data):
             labels = ",".join(f'{name}="{label(row[name])}"' for name in label_names)
             lines.append(f'lakehouse_screener_{group}{{{labels}}} {row["average_eur"]}')
             lines.append(f'lakehouse_screener_{group}_properties{{{labels}}} {row["count"]}')
+    if history_data:
+        lines.append(f'lakehouse_screener_manually_imported_listings {history_data["manual_imported_listings"]}')
+        for group, label_names in (
+            ("average_price_per_sqm_by_month", ("month",)),
+            ("average_price_per_sqm_by_quarter", ("quarter",)),
+            ("average_price_per_sqm_by_plz3_quarter", ("plz3", "quarter")),
+        ):
+            for row in history_data[group]:
+                labels = ",".join(f'{name}="{label(row[name])}"' for name in label_names)
+                lines.append(f'lakehouse_screener_historical_{group}{{{labels}}} {row["average_eur"]}')
+                lines.append(f'lakehouse_screener_historical_{group}_properties{{{labels}}} {row["count"]}')
     request = Request(endpoint, data=("\n".join(lines) + "\n").encode("utf-8"),
                       headers={"Content-Type": "text/plain"}, method="POST")
     with urlopen(request, timeout=15) as response:
@@ -83,10 +94,10 @@ def _publish_metrics(summary_data):
 
 @asset(group_name="real_estate")
 def screener_bronze(context: AssetExecutionContext) -> MaterializeResult:
-    """Copy current source listings without collapsing cross-portal identities."""
+    """Archive current and manually imported source rows without collapsing identities."""
     rows, after = [], 0
     while True:
-        page = _api("/api/bi-export", after=after, limit=500)
+        page = _api("/api/bi-export", after=after, limit=500, history="true")
         rows.extend(page["rows"])
         if len(rows) > 10000:
             raise ValueError("Screener export exceeds the 10000-listing safety limit")
@@ -107,13 +118,15 @@ def screener_bronze(context: AssetExecutionContext) -> MaterializeResult:
 
 @asset(group_name="real_estate", deps=[screener_bronze])
 def screener_silver(context: AssetExecutionContext) -> MaterializeResult:
-    """Clean and deduplicate current source listings with explicit match evidence."""
+    """Deduplicate verified history separately from the current inventory."""
     day = datetime.now(timezone.utc).date().isoformat()
     s3 = _s3()
     bronze = s3.get_object(Bucket=os.environ["S3_BUCKET"],
                            Key=f"bronze/screener/date={day}/listings.jsonl")["Body"].read()
     rows = [json.loads(line) for line in bronze.decode("utf-8").splitlines() if line]
-    dataset = deduplicate(rows)
+    current_rows, history_rows = split_current_and_history(rows)
+    historical = deduplicate(history_rows)
+    dataset = deduplicate(current_rows)
     enricher = PropertyEnricher(
         s3, os.environ["S3_BUCKET"],
         max_new_calls=int(os.environ.get("SCREENER_LLM_MAX_NEW_CALLS", "250")),
@@ -129,6 +142,14 @@ def screener_silver(context: AssetExecutionContext) -> MaterializeResult:
                "llm_time_skipped_properties": enricher.time_skipped,
                "listings": dataset["listings"],
                "match_evidence": dataset["match_evidence"]}
+    historical_summary = summary(historical)
+    dataset["historical_summary"] = {
+        key: historical_summary[key] for key in (
+            "average_price_per_sqm_by_month", "average_price_per_sqm_by_quarter",
+            "average_price_per_sqm_by_plz3_quarter",
+        )
+    }
+    dataset["historical_summary"]["manual_imported_listings"] = len(rows) - len(current_rows)
     key = f"silver/screener/date={day}/properties.json"
     body = json.dumps(dataset, ensure_ascii=False).encode("utf-8")
     s3.put_object(Bucket=os.environ["S3_BUCKET"], Key=key, Body=body,
@@ -162,14 +183,15 @@ def screener_gold(context: AssetExecutionContext) -> MaterializeResult:
     silver = json.loads(s3.get_object(Bucket=os.environ["S3_BUCKET"],
         Key=f"silver/screener/date={day}/properties.json")["Body"].read())
     kpis = {"algorithm_version": silver["algorithm_version"],
-            "snapshot_at": silver["snapshot_at"], "summary": summary(silver)}
+            "snapshot_at": silver["snapshot_at"], "summary": summary(silver),
+            "historical_summary": silver.get("historical_summary")}
     body = json.dumps(kpis, ensure_ascii=False).encode("utf-8")
     key = f"gold/screener/date={day}/kpis.json"
     s3.put_object(Bucket=os.environ["S3_BUCKET"], Key=key, Body=body,
                   ContentType="application/json")
     s3.put_object(Bucket=os.environ["S3_BUCKET"], Key="gold/screener/current.json",
                   Body=body, ContentType="application/json")
-    _publish_metrics(kpis["summary"])
+    _publish_metrics(kpis["summary"], kpis["historical_summary"])
     context.log.info("Published KPIs for %s unique properties", kpis["summary"]["unique_properties"])
     return MaterializeResult(metadata={"unique_properties": kpis["summary"]["unique_properties"],
                               "object": MetadataValue.text(key)})

@@ -181,6 +181,11 @@ def deduplicate(rows):
             "duplicate_count": len(rows) - len(properties)}
 
 
+def split_current_and_history(rows):
+    """Imported Fredy rows contribute to cohorts, never to active inventory KPIs."""
+    return [row for row in rows if not row.get("manual_import")], rows
+
+
 def summary(dataset, as_of=None):
     properties = dataset["listings"]
     now = _timestamp(as_of) if as_of else datetime.now(timezone.utc)
