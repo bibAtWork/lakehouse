@@ -45,6 +45,8 @@ def _publish_metrics(summary_data):
         "priced_properties": summary_data["priced_properties"],
         "median_price_eur": summary_data["median_price_eur"],
         "median_price_per_sqm_eur": summary_data["median_price_per_sqm_eur"],
+        "average_price_per_sqm_eur": summary_data["average_price_per_sqm_eur"],
+        "new_properties_24h": summary_data["new_properties_24h"],
         "snapshot_timestamp_seconds": datetime.now(timezone.utc).timestamp(),
     }
     lines = [f"lakehouse_screener_{name} {value}" for name, value in metrics.items()
@@ -57,6 +59,19 @@ def _publish_metrics(summary_data):
         lines.append(f'lakehouse_screener_sources_by_provider{{provider="{provider}"}} {row["count"]}')
     for reason, count in summary_data["matches_by_reason"].items():
         lines.append(f'lakehouse_screener_matches_by_reason{{reason="{reason}"}} {count}')
+    def label(value):
+        return str(value).replace("\\", "\\\\").replace('"', '\\"').replace("\n", " ")
+
+    for group, label_names in (
+        ("average_price_per_sqm_by_plz3", ("plz3",)),
+        ("average_price_per_sqm_by_month", ("month",)),
+        ("average_price_per_sqm_by_quarter", ("quarter",)),
+        ("average_price_per_sqm_by_plz3_quarter", ("plz3", "quarter")),
+    ):
+        for row in summary_data[group]:
+            labels = ",".join(f'{name}="{label(row[name])}"' for name in label_names)
+            lines.append(f'lakehouse_screener_{group}{{{labels}}} {row["average_eur"]}')
+            lines.append(f'lakehouse_screener_{group}_properties{{{labels}}} {row["count"]}')
     request = Request(endpoint, data=("\n".join(lines) + "\n").encode("utf-8"),
                       headers={"Content-Type": "text/plain"}, method="POST")
     with urlopen(request, timeout=15) as response:

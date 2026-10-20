@@ -1,9 +1,10 @@
 """Deterministic cross-portal property matching over screener source records."""
 
 from collections import Counter, defaultdict
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
 from itertools import combinations
-from statistics import median
+from statistics import mean, median
 import re
 import unicodedata
 
@@ -53,6 +54,16 @@ def _number(value):
     try:
         return Decimal(str(value))
     except InvalidOperation:
+        return None
+
+
+def _timestamp(value):
+    if not isinstance(value, str):
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        return parsed.astimezone(timezone.utc) if parsed.tzinfo else None
+    except ValueError:
         return None
 
 
@@ -150,6 +161,10 @@ def deduplicate(rows):
                             "postal_code", "street", "house_number", "build_year"))
             return (complete, row.get("last_detail_success_at") or "", -int(row["listing_id"]))
         canonical = max(members, key=priority).copy()
+        first_seen = [(seen, row["first_seen_at"]) for row in members
+                      if (seen := _timestamp(row.get("first_seen_at")))]
+        if first_seen:
+            canonical["first_seen_at"] = min(first_seen)[1]
         canonical["group_id"] = min(int(row["listing_id"]) for row in members)
         canonical["duplicate_count"] = len(members) - 1
         canonical["sources"] = [{field: row.get(field) for field in
@@ -161,12 +176,44 @@ def deduplicate(rows):
             "duplicate_count": len(rows) - len(properties)}
 
 
-def summary(dataset):
+def summary(dataset, as_of=None):
     properties = dataset["listings"]
+    now = _timestamp(as_of) if as_of else datetime.now(timezone.utc)
+    if now is None:
+        raise ValueError("as_of must be an ISO 8601 timestamp with timezone")
     priced = [row for row in properties if _number(row.get("price")) is not None]
     per_sqm = [float(_number(row["price"]) / _number(row["living_area_m2"]))
                for row in priced if _number(row.get("living_area_m2")) and
-               _number(row["living_area_m2"]) > 0]
+               _number(row["living_area_m2"]) > 0 and _number(row["price"]) > 0]
+    by_plz3 = defaultdict(list)
+    by_month = defaultdict(list)
+    by_quarter = defaultdict(list)
+    by_plz3_quarter = defaultdict(list)
+    new_properties_24h = 0
+    for row in properties:
+        seen = _timestamp(row.get("first_seen_at"))
+        if seen and now - timedelta(days=1) <= seen <= now:
+            new_properties_24h += 1
+        price, area = _number(row.get("price")), _number(row.get("living_area_m2"))
+        if price is None or area is None or price <= 0 or area <= 0:
+            continue
+        value = float(price / area)
+        postal = str(row.get("postal_code") or "")
+        plz3 = postal[:3] if re.fullmatch(r"\d{5}", postal) else None
+        if plz3:
+            by_plz3[plz3].append(value)
+        if seen:
+            month = seen.strftime("%Y-%m")
+            quarter = f"{seen.year}-Q{(seen.month - 1) // 3 + 1}"
+            by_month[month].append(value)
+            by_quarter[quarter].append(value)
+            if plz3:
+                by_plz3_quarter[(plz3, quarter)].append(value)
+
+    def grouped(groups, labels):
+        return [{**dict(zip(labels, key if isinstance(key, tuple) else (key,))),
+                 "count": len(values), "average_eur": float(mean(values))}
+                for key, values in sorted(groups.items())]
     cities = Counter((row.get("city") or "Unknown").strip() for row in properties)
     providers = Counter(source.get("provider") or "Unknown" for row in properties
                         for source in row["sources"])
@@ -181,6 +228,12 @@ def summary(dataset):
         "priced_properties": len(priced),
         "median_price_eur": float(median([_number(row["price"]) for row in priced])) if priced else None,
         "median_price_per_sqm_eur": float(median(per_sqm)) if per_sqm else None,
+        "average_price_per_sqm_eur": float(mean(per_sqm)) if per_sqm else None,
+        "new_properties_24h": new_properties_24h,
+        "average_price_per_sqm_by_plz3": grouped(by_plz3, ("plz3",)),
+        "average_price_per_sqm_by_month": grouped(by_month, ("month",)),
+        "average_price_per_sqm_by_quarter": grouped(by_quarter, ("quarter",)),
+        "average_price_per_sqm_by_plz3_quarter": grouped(by_plz3_quarter, ("plz3", "quarter")),
         "by_city": [{"city": city, "count": count} for city, count in cities.most_common(10)],
         "sources_by_provider": [{"provider": provider, "count": count}
                                 for provider, count in providers.most_common()],
