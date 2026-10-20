@@ -68,6 +68,39 @@ class DedupTests(unittest.TestCase):
                     plot_area_m2=None, build_year=None)
         self.assertEqual(dedup.deduplicate([raw, other])["unique_count"], 1)
 
+    def test_metabase_style_price_and_release_cohorts_use_unique_properties(self):
+        rows = [
+            row(1, price="300000", living_area_m2="100", postal_code="72764",
+                first_seen_at="2026-09-10T10:00:00Z"),
+            row(2, price="300000", living_area_m2="100", postal_code="72764",
+                first_seen_at="2026-10-19T10:00:00Z", provider="sparkasse"),
+            row(3, price="600000", living_area_m2="100", postal_code="72070",
+                title="Other", city="Tübingen", first_seen_at="2026-10-19T12:00:00Z"),
+        ]
+        dataset = dedup.deduplicate(rows)
+        self.assertEqual(dataset["unique_count"], 2)
+        self.assertEqual(next(p for p in dataset["listings"] if p["group_id"] == 1)
+                         ["first_seen_at"], "2026-09-10T10:00:00Z")
+        result = dedup.summary(dataset, as_of="2026-10-20T04:00:00Z")
+        self.assertEqual(result["average_price_per_sqm_eur"], 4500)
+        self.assertEqual(result["new_properties_24h"], 1)
+        self.assertEqual(result["average_price_per_sqm_by_plz3"], [
+            {"plz3": "720", "count": 1, "average_eur": 6000},
+            {"plz3": "727", "count": 1, "average_eur": 3000},
+        ])
+        self.assertEqual(result["average_price_per_sqm_by_month"], [
+            {"month": "2026-09", "count": 1, "average_eur": 3000},
+            {"month": "2026-10", "count": 1, "average_eur": 6000},
+        ])
+        self.assertEqual(result["average_price_per_sqm_by_quarter"], [
+            {"quarter": "2026-Q3", "count": 1, "average_eur": 3000},
+            {"quarter": "2026-Q4", "count": 1, "average_eur": 6000},
+        ])
+        self.assertEqual(result["average_price_per_sqm_by_plz3_quarter"], [
+            {"plz3": "720", "quarter": "2026-Q4", "count": 1, "average_eur": 6000},
+            {"plz3": "727", "quarter": "2026-Q3", "count": 1, "average_eur": 3000},
+        ])
+
 
 if __name__ == "__main__":
     unittest.main()
