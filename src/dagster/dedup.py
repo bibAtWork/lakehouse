@@ -9,6 +9,11 @@ import re
 import unicodedata
 
 
+# A 1 m² "living area" on a million-euro home is a source-data error, not a
+# useful asking-price-per-m² observation. Keep the listing in Silver.
+MIN_PRICE_PER_SQM_AREA_M2 = 10
+
+
 def _text(value):
     if value is None:
         return None
@@ -184,7 +189,10 @@ def summary(dataset, as_of=None):
     priced = [row for row in properties if _number(row.get("price")) is not None]
     per_sqm = [float(_number(row["price"]) / _number(row["living_area_m2"]))
                for row in priced if _number(row.get("living_area_m2")) and
-               _number(row["living_area_m2"]) > 0 and _number(row["price"]) > 0]
+               _number(row["living_area_m2"]) >= MIN_PRICE_PER_SQM_AREA_M2 and
+               _number(row["price"]) > 0]
+    implausible_area = sum(0 < _number(row.get("living_area_m2")) < MIN_PRICE_PER_SQM_AREA_M2
+                           for row in priced if _number(row.get("living_area_m2")) is not None)
     by_plz3 = defaultdict(list)
     by_month = defaultdict(list)
     by_quarter = defaultdict(list)
@@ -195,7 +203,7 @@ def summary(dataset, as_of=None):
         if seen and now - timedelta(days=1) <= seen <= now:
             new_properties_24h += 1
         price, area = _number(row.get("price")), _number(row.get("living_area_m2"))
-        if price is None or area is None or price <= 0 or area <= 0:
+        if price is None or area is None or price <= 0 or area < MIN_PRICE_PER_SQM_AREA_M2:
             continue
         value = float(price / area)
         postal = str(row.get("postal_code") or "")
@@ -231,6 +239,7 @@ def summary(dataset, as_of=None):
         "median_price_eur": float(median([_number(row["price"]) for row in priced])) if priced else None,
         "median_price_per_sqm_eur": float(median(per_sqm)) if per_sqm else None,
         "average_price_per_sqm_eur": float(mean(per_sqm)) if per_sqm else None,
+        "price_per_sqm_implausible_area_properties": implausible_area,
         "new_properties_24h": new_properties_24h,
         "average_price_per_sqm_by_plz3": grouped(by_plz3, ("plz3",)),
         "average_price_per_sqm_by_month": grouped(by_month, ("month",)),

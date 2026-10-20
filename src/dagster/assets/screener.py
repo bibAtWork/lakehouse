@@ -48,6 +48,7 @@ def _publish_metrics(summary_data):
         "median_price_eur": summary_data["median_price_eur"],
         "median_price_per_sqm_eur": summary_data["median_price_per_sqm_eur"],
         "average_price_per_sqm_eur": summary_data["average_price_per_sqm_eur"],
+        "price_per_sqm_implausible_area_properties": summary_data["price_per_sqm_implausible_area_properties"],
         "new_properties_24h": summary_data["new_properties_24h"],
         "snapshot_timestamp_seconds": datetime.now(timezone.utc).timestamp(),
     }
