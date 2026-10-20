@@ -55,6 +55,10 @@ INSTRUCTIONS = (
 )
 
 
+class GeminiQuotaExceeded(RuntimeError):
+    """The model API cannot accept more enrichment requests in this run."""
+
+
 def _numbers(text):
     for match in re.finditer(r"\d+(?:[.,]\d+)*", str(text)):
         token = match.group()
@@ -179,6 +183,8 @@ def _gemini_facts(description, api_key, model):
             parts = result["candidates"][0]["content"]["parts"]
             return json.loads("".join(part.get("text", "") for part in parts))
         except HTTPError as error:
+            if error.code == 429 and attempt == 3:
+                raise GeminiQuotaExceeded("Gemini property extraction failed (HTTP 429)") from None
             if error.code not in {429, 500, 502, 503, 504} or attempt == 3:
                 raise RuntimeError(f"Gemini property extraction failed (HTTP {error.code})") from None
             time.sleep(2 ** attempt)
@@ -195,6 +201,8 @@ class PropertyEnricher:
         self.model = model or os.environ.get("SCREENER_LLM_MODEL", DEFAULT_MODEL)
         self.max_new_calls = max_new_calls
         self.new_calls = 0
+        self.quota_exhausted = False
+        self.quota_skipped = 0
         self.model_call = model_call or _gemini_facts
         if not re.fullmatch(r"[a-zA-Z0-9_.-]+", self.model):
             raise ValueError("Invalid model identifier")
@@ -217,10 +225,18 @@ class PropertyEnricher:
                 raise
             if not self.api_key:
                 raise RuntimeError("GEMINI_API_KEY is required for Silver enrichment") from None
+            if self.quota_exhausted:
+                self.quota_skipped += 1
+                return row
             if self.new_calls >= self.max_new_calls:
                 raise RuntimeError("Silver enrichment reached its new-call budget") from None
             self.new_calls += 1
-            facts = validated_facts(description, self.model_call(description, self.api_key, self.model))
+            try:
+                facts = validated_facts(description, self.model_call(description, self.api_key, self.model))
+            except GeminiQuotaExceeded:
+                self.quota_exhausted = True
+                self.quota_skipped += 1
+                return row
             self.s3.put_object(Bucket=self.bucket, Key=key,
                                Body=json.dumps({"facts": facts}, ensure_ascii=False).encode("utf-8"),
                                ContentType="application/json")

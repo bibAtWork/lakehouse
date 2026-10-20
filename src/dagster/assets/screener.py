@@ -41,6 +41,7 @@ def _publish_metrics(summary_data):
         "unique_properties": summary_data["unique_properties"],
         "duplicate_listings": summary_data["duplicate_listings"],
         "duplicate_rate": summary_data["duplicate_rate"],
+        "llm_quota_skipped_properties": summary_data["llm_quota_skipped_properties"],
         "priced_properties": summary_data["priced_properties"],
         "median_price_eur": summary_data["median_price_eur"],
         "median_price_per_sqm_eur": summary_data["median_price_per_sqm_eur"],
@@ -104,6 +105,7 @@ def screener_silver(context: AssetExecutionContext) -> MaterializeResult:
                "source_count": dataset["source_count"],
                "unique_count": dataset["unique_count"],
                "duplicate_count": dataset["duplicate_count"],
+               "llm_quota_skipped_properties": enricher.quota_skipped,
                "listings": dataset["listings"],
                "match_evidence": dataset["match_evidence"]}
     key = f"silver/screener/date={day}/properties.json"
@@ -111,10 +113,14 @@ def screener_silver(context: AssetExecutionContext) -> MaterializeResult:
     s3.put_object(Bucket=os.environ["S3_BUCKET"], Key=key, Body=body,
                   ContentType="application/json")
     context.log.info("Curated %s unique properties", dataset["unique_count"])
+    if enricher.quota_skipped:
+        context.log.warning("Gemini quota exhausted; %s properties retained without new enrichment",
+                            enricher.quota_skipped)
     return MaterializeResult(metadata={
         "unique_properties": dataset["unique_count"],
         "duplicates": dataset["duplicate_count"],
         "new_llm_calls": enricher.new_calls,
+        "llm_quota_skipped_properties": enricher.quota_skipped,
         "object": MetadataValue.text(key),
     })
 

@@ -1,6 +1,8 @@
 import importlib.util
 from pathlib import Path
 import unittest
+from unittest.mock import patch
+from urllib.error import HTTPError
 
 
 module_path = Path(__file__).resolve().parents[1] / "src" / "dagster" / "enrichment.py"
@@ -34,6 +36,36 @@ class MemoryS3:
 
 
 class EnrichmentTests(unittest.TestCase):
+    def test_quota_exhaustion_keeps_silver_available_and_reuses_cached_facts(self):
+        s3 = MemoryS3()
+        cached_row = {"description": DESCRIPTION, "last_detail_success_at": "2026-10-19T17:00:00Z"}
+        enrichment.PropertyEnricher(
+            s3, "bucket", api_key="test",
+            model_call=lambda *_: {"facts": [fact("build_year", "1998", "Baujahr: 1998")]},
+        ).enrich(cached_row)
+        calls = []
+
+        def quota_call(*args):
+            calls.append(args)
+            raise enrichment.GeminiQuotaExceeded("Gemini property extraction failed (HTTP 429)")
+
+        enricher = enrichment.PropertyEnricher(s3, "bucket", api_key="test", model_call=quota_call)
+        first = {"description": "Baujahr: 2001", "last_detail_success_at": "2026-10-20T04:00:00Z"}
+        second = {"description": "Baujahr: 2002", "last_detail_success_at": "2026-10-20T04:00:00Z"}
+        self.assertEqual(enricher.enrich(first), first)
+        self.assertEqual(enricher.enrich(second), second)
+        self.assertEqual(enricher.enrich(cached_row)["build_year"], 1998)
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(enricher.quota_skipped, 2)
+        self.assertEqual(enricher.new_calls, 1)
+
+    def test_http_429_has_a_distinct_error_after_bounded_retries(self):
+        error = HTTPError("https://example.test", 429, "quota", {}, None)
+        with patch.object(enrichment, "urlopen", side_effect=error), patch.object(enrichment.time, "sleep") as sleep:
+            with self.assertRaises(enrichment.GeminiQuotaExceeded):
+                enrichment._gemini_facts("description", "test-key", "gemini-3.5-flash-lite")
+        self.assertEqual(sleep.call_count, 3)
+
     def test_explicit_values_require_verbatim_evidence_and_units(self):
         payload = {"facts": [
             fact("property_type", "detached_house", "Einfamilienhaus"),
