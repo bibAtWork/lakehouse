@@ -29,6 +29,18 @@ class DedupTests(unittest.TestCase):
         self.assertEqual([part["month"] for part in cohorts["average_price_per_sqm_by_month"]],
                          ["2026-01", "2026-10"])
 
+    def test_given_a_cohort_disappears_when_gold_refreshes_then_it_gets_a_zero_sample(self):
+        previous = {"average_price_per_sqm_by_plz3_quarter": [
+            {"plz3": "751", "quarter": "2026-Q4", "average_eur": 4957},
+            {"plz3": "727", "quarter": "2026-Q4", "average_eur": 3900},
+        ]}
+        current = {"average_price_per_sqm_by_plz3_quarter": [
+            {"plz3": "727", "quarter": "2026-Q4", "average_eur": 4000},
+        ]}
+        self.assertEqual(dedup.removed_cohorts(previous, current,
+            "average_price_per_sqm_by_plz3_quarter", ("plz3", "quarter")),
+            [previous["average_price_per_sqm_by_plz3_quarter"][0]])
+
     def test_full_logical_address_and_exact_price(self):
         left = row(1, street="Hauptstraße", house_number="12 A", title=None)
         right = row(2, street="Hauptstrasse", house_number="12a", title=None,

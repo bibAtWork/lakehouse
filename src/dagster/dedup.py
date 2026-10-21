@@ -186,6 +186,13 @@ def split_current_and_history(rows):
     return [row for row in rows if not row.get("manual_import")], rows
 
 
+def removed_cohorts(previous, current, group, labels):
+    """Find old Gold series that need a zero sample when dedup changes a cohort."""
+    latest = {tuple(row[name] for name in labels) for row in current.get(group, [])}
+    return [row for row in (previous or {}).get(group, [])
+            if tuple(row[name] for name in labels) not in latest]
+
+
 def summary(dataset, as_of=None):
     properties = dataset["listings"]
     now = _timestamp(as_of) if as_of else datetime.now(timezone.utc)
