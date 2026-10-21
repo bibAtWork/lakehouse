@@ -8,8 +8,9 @@ from urllib.request import Request, urlopen
 
 import boto3
 from botocore.config import Config
+from botocore.exceptions import ClientError
 from dagster import AssetExecutionContext, MaterializeResult, MetadataValue, asset
-from lakehouse.dedup import deduplicate, split_current_and_history, summary
+from lakehouse.dedup import deduplicate, removed_cohorts, split_current_and_history, summary
 from lakehouse.enrichment import PropertyEnricher
 
 
@@ -32,7 +33,7 @@ def _s3():
     )
 
 
-def _publish_metrics(summary_data, history_data=None):
+def _publish_metrics(summary_data, history_data=None, previous_history=None):
     endpoint = os.environ.get("VM_IMPORT_URL")
     if not endpoint:
         return
@@ -86,6 +87,10 @@ def _publish_metrics(summary_data, history_data=None):
                 labels = ",".join(f'{name}="{label(row[name])}"' for name in label_names)
                 lines.append(f'lakehouse_screener_historical_{group}{{{labels}}} {row["average_eur"]}')
                 lines.append(f'lakehouse_screener_historical_{group}_properties{{{labels}}} {row["count"]}')
+            for row in removed_cohorts(previous_history, history_data, group, label_names):
+                labels = ",".join(f'{name}="{label(row[name])}"' for name in label_names)
+                lines.append(f'lakehouse_screener_historical_{group}{{{labels}}} 0')
+                lines.append(f'lakehouse_screener_historical_{group}_properties{{{labels}}} 0')
     request = Request(endpoint, data=("\n".join(lines) + "\n").encode("utf-8"),
                       headers={"Content-Type": "text/plain"}, method="POST")
     with urlopen(request, timeout=15) as response:
@@ -185,13 +190,20 @@ def screener_gold(context: AssetExecutionContext) -> MaterializeResult:
     kpis = {"algorithm_version": silver["algorithm_version"],
             "snapshot_at": silver["snapshot_at"], "summary": summary(silver),
             "historical_summary": silver.get("historical_summary")}
+    try:
+        previous = json.loads(s3.get_object(Bucket=os.environ["S3_BUCKET"],
+            Key="gold/screener/current.json")["Body"].read()).get("historical_summary")
+    except ClientError as error:
+        if error.response["Error"]["Code"] not in ("NoSuchKey", "404"):
+            raise
+        previous = None
     body = json.dumps(kpis, ensure_ascii=False).encode("utf-8")
     key = f"gold/screener/date={day}/kpis.json"
     s3.put_object(Bucket=os.environ["S3_BUCKET"], Key=key, Body=body,
                   ContentType="application/json")
+    _publish_metrics(kpis["summary"], kpis["historical_summary"], previous)
     s3.put_object(Bucket=os.environ["S3_BUCKET"], Key="gold/screener/current.json",
                   Body=body, ContentType="application/json")
-    _publish_metrics(kpis["summary"], kpis["historical_summary"])
     context.log.info("Published KPIs for %s unique properties", kpis["summary"]["unique_properties"])
     return MaterializeResult(metadata={"unique_properties": kpis["summary"]["unique_properties"],
                               "object": MetadataValue.text(key)})
