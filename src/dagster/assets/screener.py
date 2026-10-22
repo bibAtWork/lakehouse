@@ -78,6 +78,23 @@ def _publish_metrics(summary_data, history_data=None, previous_history=None):
             lines.append(f'lakehouse_screener_{group}_properties{{{labels}}} {row["count"]}')
     if history_data:
         lines.append(f'lakehouse_screener_manually_imported_listings {history_data["manual_imported_listings"]}')
+        for name in (
+            "source_listings", "unique_properties", "duplicate_listings", "duplicate_rate",
+            "priced_properties", "median_price_eur", "median_price_per_sqm_eur",
+            "average_price_per_sqm_eur", "price_per_sqm_implausible_area_properties",
+        ):
+            value = history_data.get(name)
+            if value is not None:
+                lines.append(f"lakehouse_screener_all_{name} {value}")
+        for group, metric, label_name, value_name in (
+            ("by_city", "properties_by_city", "city", "count"),
+            ("sources_by_provider", "sources_by_provider", "provider", "count"),
+            ("average_price_per_sqm_by_plz3", "average_price_per_sqm_by_plz3", "plz3", "average_eur"),
+        ):
+            for row in history_data[group]:
+                lines.append(f'lakehouse_screener_all_{metric}{{{label_name}="{label(row[label_name])}"}} {row[value_name]}')
+            for row in removed_cohorts(previous_history, history_data, group, (label_name,)):
+                lines.append(f'lakehouse_screener_all_{metric}{{{label_name}="{label(row[label_name])}"}} 0')
         for group, label_names in (
             ("average_price_per_sqm_by_month", ("month",)),
             ("average_price_per_sqm_by_quarter", ("quarter",)),
@@ -148,13 +165,8 @@ def screener_silver(context: AssetExecutionContext) -> MaterializeResult:
                "listings": dataset["listings"],
                "match_evidence": dataset["match_evidence"]}
     historical_summary = summary(historical)
-    dataset["historical_summary"] = {
-        key: historical_summary[key] for key in (
-            "average_price_per_sqm_by_month", "average_price_per_sqm_by_quarter",
-            "average_price_per_sqm_by_plz3_quarter",
-        )
-    }
-    dataset["historical_summary"]["manual_imported_listings"] = len(rows) - len(current_rows)
+    historical_summary["manual_imported_listings"] = len(rows) - len(current_rows)
+    dataset["historical_summary"] = historical_summary
     key = f"silver/screener/date={day}/properties.json"
     body = json.dumps(dataset, ensure_ascii=False).encode("utf-8")
     s3.put_object(Bucket=os.environ["S3_BUCKET"], Key=key, Body=body,
