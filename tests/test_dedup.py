@@ -24,8 +24,12 @@ class DedupTests(unittest.TestCase):
         current = row(2, first_seen_at="2026-10-19T10:00:00Z", manual_import=False,
                       title="Another", price="600000", living_area_m2="100")
         active, history = dedup.split_current_and_history([archive, current])
-        self.assertEqual(dedup.summary(dedup.deduplicate(active))["source_listings"], 1)
+        current_kpis = dedup.summary(dedup.deduplicate(active))
+        self.assertEqual((current_kpis["source_listings"], current_kpis["unique_properties"]),
+                         (1, 1))
         cohorts = dedup.summary(dedup.deduplicate(history))
+        self.assertEqual((cohorts["source_listings"], cohorts["unique_properties"]), (2, 2))
+        self.assertEqual(cohorts["average_price_per_sqm_eur"], 4500)
         self.assertEqual([part["month"] for part in cohorts["average_price_per_sqm_by_month"]],
                          ["2026-01", "2026-10"])
 
