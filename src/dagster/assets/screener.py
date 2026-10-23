@@ -45,6 +45,12 @@ def _publish_metrics(summary_data, history_data=None, previous_history=None):
         "llm_quota_skipped_properties": summary_data["llm_quota_skipped_properties"],
         "llm_budget_skipped_properties": summary_data["llm_budget_skipped_properties"],
         "llm_time_skipped_properties": summary_data["llm_time_skipped_properties"],
+        "llm_eligible_properties": summary_data["llm_eligible_properties"],
+        "llm_cache_hits": summary_data["llm_cache_hits"],
+        "llm_successful_calls": summary_data["llm_successful_calls"],
+        "llm_failed_calls": summary_data["llm_failed_calls"],
+        "llm_completed_properties": summary_data["llm_completed_properties"],
+        "llm_accepted_fact_properties": summary_data["llm_accepted_fact_properties"],
         "priced_properties": summary_data["priced_properties"],
         "median_price_eur": summary_data["median_price_eur"],
         "median_price_per_sqm_eur": summary_data["median_price_per_sqm_eur"],
@@ -155,6 +161,10 @@ def screener_silver(context: AssetExecutionContext) -> MaterializeResult:
         max_elapsed_seconds=int(os.environ.get("SCREENER_LLM_MAX_SECONDS", "300")),
     )
     dataset["listings"] = [enricher.enrich(row) for row in dataset["listings"]]
+    completed = sum((row.get("llm_enrichment") or {}).get("status") == "completed"
+                    for row in dataset["listings"])
+    accepted = sum(bool((row.get("llm_evidence") or {}).get("quotes"))
+                   for row in dataset["listings"])
     dataset = {"algorithm_version": 1, "snapshot_at": datetime.now(timezone.utc).isoformat(),
                "source_count": dataset["source_count"],
                "unique_count": dataset["unique_count"],
@@ -162,6 +172,12 @@ def screener_silver(context: AssetExecutionContext) -> MaterializeResult:
                "llm_quota_skipped_properties": enricher.quota_skipped,
                "llm_budget_skipped_properties": enricher.budget_skipped,
                "llm_time_skipped_properties": enricher.time_skipped,
+               "llm_eligible_properties": enricher.eligible_rows,
+               "llm_cache_hits": enricher.cache_hits,
+               "llm_successful_calls": enricher.successful_calls,
+               "llm_failed_calls": enricher.failed_calls,
+               "llm_completed_properties": completed,
+               "llm_accepted_fact_properties": accepted,
                "listings": dataset["listings"],
                "match_evidence": dataset["match_evidence"]}
     historical_summary = summary(historical)
@@ -181,10 +197,19 @@ def screener_silver(context: AssetExecutionContext) -> MaterializeResult:
     if enricher.time_skipped:
         context.log.warning("Silver time budget exhausted; %s properties retained without new enrichment",
                             enricher.time_skipped)
+    if enricher.failed_calls:
+        context.log.warning("Gemini failed for %s properties; they remain eligible for the next run",
+                            enricher.failed_calls)
     return MaterializeResult(metadata={
         "unique_properties": dataset["unique_count"],
         "duplicates": dataset["duplicate_count"],
         "new_llm_calls": enricher.new_calls,
+        "llm_successful_calls": enricher.successful_calls,
+        "llm_failed_calls": enricher.failed_calls,
+        "llm_cache_hits": enricher.cache_hits,
+        "llm_eligible_properties": enricher.eligible_rows,
+        "llm_completed_properties": completed,
+        "llm_accepted_fact_properties": accepted,
         "llm_quota_skipped_properties": enricher.quota_skipped,
         "llm_budget_skipped_properties": enricher.budget_skipped,
         "llm_time_skipped_properties": enricher.time_skipped,

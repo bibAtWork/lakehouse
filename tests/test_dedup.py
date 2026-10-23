@@ -77,6 +77,10 @@ class DedupTests(unittest.TestCase):
         self.assertEqual(dedup.summary(result)["median_price_eur"], 425000)
         result["llm_quota_skipped_properties"] = 2
         self.assertEqual(dedup.summary(result)["llm_quota_skipped_properties"], 2)
+        result["llm_successful_calls"] = 3
+        result["llm_failed_calls"] = 1
+        self.assertEqual((dedup.summary(result)["llm_successful_calls"],
+                          dedup.summary(result)["llm_failed_calls"]), (3, 1))
 
     def test_missing_price_does_not_merge(self):
         result = dedup.deduplicate([row(1, price=None), row(2, price=None)])
