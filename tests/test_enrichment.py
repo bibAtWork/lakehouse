@@ -58,6 +58,10 @@ class EnrichmentTests(unittest.TestCase):
         self.assertEqual(len(calls), 1)
         self.assertEqual(enricher.quota_skipped, 2)
         self.assertEqual(enricher.new_calls, 1)
+        retry = enrichment.PropertyEnricher(s3, "bucket", api_key="test",
+            model_call=lambda *_: {"facts": [fact("build_year", "2001", "Baujahr: 2001")]})
+        self.assertEqual(retry.enrich(first)["build_year"], 2001)
+        self.assertEqual(retry.successful_calls, 1)
 
     def test_http_429_has_a_distinct_error_after_bounded_retries(self):
         error = HTTPError("https://example.test", 429, "quota", {}, None)
@@ -151,14 +155,71 @@ class EnrichmentTests(unittest.TestCase):
         self.assertEqual(enricher.time_skipped, 1)
         self.assertEqual(calls, [])
 
-    def test_search_excerpt_is_not_sent_to_the_model(self):
+    def test_any_description_is_enriched_once_even_without_detail_fetch(self):
         calls = []
+
+        def model_call(description, *_):
+            calls.append(description)
+            return {"facts": [fact("build_year", "2001", "Baujahr: 2001")]}
+
         enricher = enrichment.PropertyEnricher(MemoryS3(), "bucket", api_key="test",
-                                               model_call=lambda *_: calls.append(True))
-        row = {"description": "Search preview only", "last_detail_success_at": None}
-        self.assertIs(enricher.enrich(row), row)
-        self.assertEqual(calls, [])
-        self.assertEqual(enricher.new_calls, 0)
+                                               model_call=model_call)
+        row = {"description": "Baujahr: 2001", "last_detail_success_at": None}
+        first = enricher.enrich(row)
+        second = enricher.enrich(row)
+        self.assertEqual(first["build_year"], 2001)
+        self.assertEqual(second["build_year"], 2001)
+        self.assertEqual(first["llm_enrichment"]["status"], "completed")
+        self.assertEqual(calls, ["Baujahr: 2001"])
+        self.assertEqual(enricher.enrich(first), first)
+        self.assertEqual(calls, ["Baujahr: 2001"])
+
+    def test_changed_description_is_enriched_again(self):
+        calls = []
+
+        def model_call(description, *_):
+            calls.append(description)
+            year = description.split(": ")[1]
+            return {"facts": [fact("build_year", year, description)]}
+
+        enricher = enrichment.PropertyEnricher(MemoryS3(), "bucket", api_key="test",
+                                               model_call=model_call)
+        first = enricher.enrich({"description": "Baujahr: 2001"})
+        second = enricher.enrich({"description": "Baujahr: 2002"})
+        self.assertEqual((first["build_year"], second["build_year"]), (2001, 2002))
+        self.assertEqual(len(calls), 2)
+
+    def test_failed_call_is_retryable_in_the_next_run(self):
+        s3 = MemoryS3()
+        row = {"description": "Baujahr: 2001"}
+
+        def fail(*_):
+            raise RuntimeError("Gemini unavailable")
+
+        first = enrichment.PropertyEnricher(s3, "bucket", api_key="test", model_call=fail)
+        self.assertEqual(first.enrich(row), row)
+        self.assertEqual(first.failed_calls, 1)
+        self.assertEqual(s3.objects, {})
+        second = enrichment.PropertyEnricher(s3, "bucket", api_key="test",
+            model_call=lambda *_: {"facts": [fact("build_year", "2001", "Baujahr: 2001")]})
+        self.assertEqual(second.enrich(row)["build_year"], 2001)
+        self.assertEqual(second.successful_calls, 1)
+
+    def test_successful_empty_result_is_cached(self):
+        calls = []
+
+        def model_call(*_):
+            calls.append(True)
+            return {"facts": []}
+
+        enricher = enrichment.PropertyEnricher(MemoryS3(), "bucket", api_key="test",
+                                               model_call=model_call)
+        row = {"description": "No explicit property facts"}
+        result = enricher.enrich(row)
+        self.assertEqual(result["llm_enrichment"]["status"], "completed")
+        self.assertEqual(result["llm_enrichment"]["accepted_fields"], 0)
+        self.assertEqual(enricher.enrich(row), result)
+        self.assertEqual(len(calls), 1)
 
 
 if __name__ == "__main__":

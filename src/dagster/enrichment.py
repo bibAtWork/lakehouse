@@ -202,6 +202,10 @@ class PropertyEnricher:
         self.model = model or os.environ.get("SCREENER_LLM_MODEL", DEFAULT_MODEL)
         self.max_new_calls = max_new_calls
         self.new_calls = 0
+        self.successful_calls = 0
+        self.failed_calls = 0
+        self.cache_hits = 0
+        self.eligible_rows = 0
         self.quota_exhausted = False
         self.quota_skipped = 0
         self.budget_skipped = 0
@@ -214,19 +218,26 @@ class PropertyEnricher:
 
     def enrich(self, row):
         description = row.get("description")
-        # Search-only text can be a portal excerpt. Only a successful detail
-        # fetch establishes that the screener retained the page description.
-        if not row.get("last_detail_success_at") or not isinstance(description, str) or not description.strip():
+        if not isinstance(description, str) or not description.strip():
             return row
+        self.eligible_rows += 1
         digest = hashlib.sha256(description.encode("utf-8")).hexdigest()
+        marker = row.get("llm_enrichment")
+        if (isinstance(marker, dict) and marker.get("status") == "completed" and
+                marker.get("model") == self.model and marker.get("schema_version") == SCHEMA_VERSION and
+                marker.get("description_sha256") == digest):
+            return row
         key = (f"silver/screener/enrichment-cache/v{SCHEMA_VERSION}/"
                f"{self.model}/{digest}.json")
         try:
             cached = json.loads(self.s3.get_object(Bucket=self.bucket, Key=key)["Body"].read())
             facts = cached["facts"]
+            if not isinstance(facts, dict):
+                raise ValueError("Invalid cached enrichment")
+            self.cache_hits += 1
         except Exception as error:
             code = getattr(error, "response", {}).get("Error", {}).get("Code")
-            if code not in {"NoSuchKey", "404"} and not isinstance(error, KeyError):
+            if code not in {"NoSuchKey", "404"} and not isinstance(error, (KeyError, ValueError, TypeError)):
                 raise
             if not self.api_key:
                 raise RuntimeError("GEMINI_API_KEY is required for Silver enrichment") from None
@@ -246,10 +257,17 @@ class PropertyEnricher:
                 self.quota_exhausted = True
                 self.quota_skipped += 1
                 return row
+            except Exception:
+                # Only a completed, validated response is cached. Failed records
+                # remain eligible for the next scheduled Silver run.
+                self.failed_calls += 1
+                return row
             self.s3.put_object(Bucket=self.bucket, Key=key,
                                Body=json.dumps({"facts": facts}, ensure_ascii=False).encode("utf-8"),
                                ContentType="application/json")
+            self.successful_calls += 1
         result = row.copy()
+        result.pop("llm_evidence", None)
         accepted = {}
         for field, claim in facts.items():
             if result.get(field) in (None, ""):
@@ -258,4 +276,8 @@ class PropertyEnricher:
         if accepted:
             result["llm_evidence"] = {"model": self.model, "schema_version": SCHEMA_VERSION,
                                       "description_sha256": digest, "quotes": accepted}
+        result["llm_enrichment"] = {"status": "completed", "model": self.model,
+                                    "schema_version": SCHEMA_VERSION,
+                                    "description_sha256": digest,
+                                    "accepted_fields": len(accepted)}
         return result
