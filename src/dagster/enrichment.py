@@ -195,7 +195,7 @@ def _gemini_facts(description, api_key, model):
 
 class PropertyEnricher:
     def __init__(self, s3, bucket, api_key=None, model=None, max_new_calls=250,
-                 max_elapsed_seconds=300, model_call=None):
+                 max_elapsed_seconds=300, model_call=None, cache_only=False):
         self.s3 = s3
         self.bucket = bucket
         self.api_key = api_key if api_key is not None else os.environ.get("GEMINI_API_KEY")
@@ -209,6 +209,8 @@ class PropertyEnricher:
         self.quota_exhausted = False
         self.quota_skipped = 0
         self.budget_skipped = 0
+        self.cache_pending = 0
+        self.cache_only = cache_only
         self.max_elapsed_seconds = max_elapsed_seconds
         self.started_at = time.monotonic()
         self.time_skipped = 0
@@ -239,8 +241,11 @@ class PropertyEnricher:
             code = getattr(error, "response", {}).get("Error", {}).get("Code")
             if code not in {"NoSuchKey", "404"} and not isinstance(error, (KeyError, ValueError, TypeError)):
                 raise
+            if self.cache_only:
+                self.cache_pending += 1
+                return row
             if not self.api_key:
-                raise RuntimeError("GEMINI_API_KEY is required for Silver enrichment") from None
+                raise RuntimeError("GEMINI_API_KEY is required for LLM enrichment") from None
             if self.quota_exhausted:
                 self.quota_skipped += 1
                 return row
@@ -259,7 +264,7 @@ class PropertyEnricher:
                 return row
             except Exception:
                 # Only a completed, validated response is cached. Failed records
-                # remain eligible for the next scheduled Silver run.
+                # remain eligible for the next scheduled LLM run.
                 self.failed_calls += 1
                 return row
             self.s3.put_object(Bucket=self.bucket, Key=key,

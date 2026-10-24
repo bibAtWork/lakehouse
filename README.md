@@ -5,12 +5,13 @@ This repository contains the Dagster asset code and configuration for the homela
 The daily real-estate pipeline consumes records already produced by the real-estate screener:
 
 - **Bronze**: `screener_bronze` pages the screener's read-only BI export, including its stored descriptions and detail-success timestamps, and archives the source records unchanged in `bronze/screener/date=YYYY-MM-DD/listings.jsonl`.
-- **Silver**: `screener_silver` normalizes the five matching attributes and groups listings with exactly equal asking prices when either complete logical addresses match or at least three populated attributes match. It asks Gemini 3.5 Flash-Lite for missing schema fields whenever a canonical property has a description without a completed enrichment for that text; search-only text may be an excerpt. Every accepted LLM value has a verbatim source quote, passes local type/unit checks, and never replaces a portal-derived value. Unknown or conflicting facts remain absent. Silver stores the canonical properties, all source identities, match evidence and accepted LLM evidence in `silver/screener/date=YYYY-MM-DD/properties.json`.
+- **LLM enrichment**: `screener_llm_enrichment` deduplicates the current Bronze inventory and fills a validated Gemini 3.5 Flash-Lite result cache for descriptions that are not yet completed; search-only text may be an excerpt. It does not publish Silver or Gold. Failed and rate-limited calls remain eligible for the next LLM run.
+- **Silver**: `screener_silver` normalizes the five matching attributes and groups listings with exactly equal asking prices when either complete logical addresses match or at least three populated attributes match. It reads completed enrichment results from the cache without calling Gemini. Every accepted LLM value has a verbatim source quote, passes local type/unit checks, and never replaces a portal-derived value. Unknown or conflicting facts remain absent. Silver stores the canonical properties, all source identities, match evidence and accepted LLM evidence in `silver/screener/date=YYYY-MM-DD/properties.json`.
 - **Gold**: `screener_gold` stores aggregate KPI objects in `gold/screener/date=YYYY-MM-DD/kpis.json` and `gold/screener/current.json`, and publishes daily aggregate samples to VictoriaMetrics for the Grafana BI dashboard. The BI objects include deduplicated asking-price-per-m² averages by three-digit postcode and by first-seen month/quarter, plus the number of newly seen properties in the last 24 hours. A property's first-seen time is the earliest time across its matched source listings. Historical cohorts cover properties retained by the current screener export; they are not a complete record of removed listings. No property address or URL is used as a metric label.
 
 Price-per-m² metrics require a positive asking price and at least 10 m² of living area. A source listing reporting 1 m² with a million-euro price would otherwise dominate the mean; the listing remains in Silver, and Gold counts properties excluded by this area rule.
 
-The `screener_bi_refresh` schedule runs at 04:00 UTC. The screener remains the sole property-site collector. The lakehouse keeps dated snapshots so BI history does not depend on the metrics retention window.
+`screener_bronze_refresh` archives the screener at 03:00 UTC. `screener_llm_refresh` fills the enrichment cache at 03:15 and every three hours through 21:15 UTC. `screener_bi_refresh` builds Silver and Gold at 04:00 UTC; later LLM results enter the next daily BI snapshot. The screener remains the sole property-site collector. The lakehouse keeps dated snapshots so BI history does not depend on the metrics retention window.
 
 Silver can fill `property_type`, `build_year`, `living_area_m2`, `plot_area_m2`, `rooms`,
 `energy_class`, `end_energy_consumption_kwh_m2a`, `primary_energy_carrier`, and explicit
@@ -24,12 +25,11 @@ Any nonempty description is sent to Google's Gemini API when no completed result
 The model response is validated against exact quotes in that description; model JSON
 shape alone does not establish factual correctness. Successful results are cached by
 description SHA-256, model and schema version in SeaweedFS, avoiding repeat API calls
-for unchanged text. A completed response with no accepted facts is cached too; a failed or rate-limited response is never cached and is retried on a later daily run. Silver marks completed rows even when no new fields were accepted. `SCREENER_LLM_MAX_NEW_CALLS` defaults to 250 per run and
+for unchanged text. A completed response with no accepted facts is cached too; a failed or rate-limited response is never cached and is retried on a later LLM run. Silver marks completed rows even when no new fields were accepted. `SCREENER_LLM_MAX_NEW_CALLS` defaults to 250 per LLM run and
 `SCREENER_LLM_MAX_SECONDS` to 300 seconds; an in-flight request may extend the latter
-by its timeout. If Gemini returns HTTP 429 after bounded retries or either budget is exhausted, Silver
-preserves the source fields for uncached properties and publishes the snapshot; Dagster
-metadata and Gold metrics report eligible properties, successful calls, cache hits, failed calls and how many properties skipped enrichment for each reason.
-Other API failures retain the source fields and retry on a later run; missing credentials still fail Silver before publishing a new dataset. The cache and Silver evidence
+by its timeout. If Gemini returns HTTP 429 after bounded retries or either budget is exhausted, the LLM run retains uncached properties for the next attempt. Silver
+preserves their source fields and publishes the snapshot. Its `llm_cache_pending_properties` count shows how many canonical descriptions still lack a completed result. The `llm_enrichment.status=completed` marker in Silver records the model, schema version and description SHA-256, including successful responses with zero accepted fields; a changed description becomes eligible again. Dagster LLM-run metadata reports successful calls, cache hits, failed calls and skips.
+Other API failures retry on a later LLM run; missing credentials fail that run while Silver remains available. The cache and Silver evidence
 contain quoted property text and share the `lakehouse-data` bucket's access controls.
 
 The `src/spark` and `src/dbt` directories contain exploratory examples for future pipelines.
@@ -46,7 +46,7 @@ docker compose exec dagster-daemon dagster asset materialize -m lakehouse --sele
 Open Dagster at <http://localhost:3333>. Stop the stack with `docker compose down`; use `docker compose down -v` to discard its local database and S3 data.
 
 Set `SCREENER_API_URL` in `.env` when testing the real-estate assets against a local screener. The default is `http://host.docker.internal:3000`. `VM_IMPORT_URL` is optional locally; the cluster sets it to VictoriaMetrics' import endpoint. Run `python -m unittest discover -s tests` to check the matching rules without a running cluster.
-For local Silver materialization, set `GEMINI_API_KEY` in `.env`; the cluster reads the
+For local LLM materialization, set `GEMINI_API_KEY` in `.env`; the cluster reads the
 SOPS-encrypted `google-gemini-api-key` Secret from its own namespace. Do not commit
 the key or a decrypted Secret. The optional `SCREENER_LLM_MODEL` setting defaults to
 `gemini-3.5-flash-lite`.
