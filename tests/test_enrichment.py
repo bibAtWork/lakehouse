@@ -36,6 +36,31 @@ class MemoryS3:
 
 
 class EnrichmentTests(unittest.TestCase):
+    def test_cache_only_silver_applies_completed_results_without_calling_gemini(self):
+        s3 = MemoryS3()
+        row = {"description": "Baujahr: 2001"}
+        calls = []
+        silver = enrichment.PropertyEnricher(
+            s3, "bucket", api_key="", cache_only=True,
+            model_call=lambda *_: calls.append(True),
+        )
+        self.assertEqual(silver.enrich(row), row)
+        self.assertEqual(silver.cache_pending, 1)
+        llm = enrichment.PropertyEnricher(
+            s3, "bucket", api_key="test",
+            model_call=lambda *_: {"facts": [fact("build_year", "2001", "Baujahr: 2001")]},
+        )
+        llm.enrich(row)
+        refreshed_silver = enrichment.PropertyEnricher(
+            s3, "bucket", api_key="", cache_only=True,
+            model_call=lambda *_: calls.append(True),
+        )
+        result = refreshed_silver.enrich(row)
+        self.assertEqual(result["build_year"], 2001)
+        self.assertEqual(result["llm_enrichment"]["status"], "completed")
+        self.assertEqual(refreshed_silver.cache_hits, 1)
+        self.assertEqual(calls, [])
+
     def test_quota_exhaustion_keeps_silver_available_and_reuses_cached_facts(self):
         s3 = MemoryS3()
         cached_row = {"description": DESCRIPTION, "last_detail_success_at": "2026-10-19T17:00:00Z"}

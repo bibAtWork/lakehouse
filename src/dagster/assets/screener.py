@@ -45,6 +45,7 @@ def _publish_metrics(summary_data, history_data=None, previous_history=None):
         "llm_quota_skipped_properties": summary_data["llm_quota_skipped_properties"],
         "llm_budget_skipped_properties": summary_data["llm_budget_skipped_properties"],
         "llm_time_skipped_properties": summary_data["llm_time_skipped_properties"],
+        "llm_cache_pending_properties": summary_data["llm_cache_pending_properties"],
         "llm_eligible_properties": summary_data["llm_eligible_properties"],
         "llm_cache_hits": summary_data["llm_cache_hits"],
         "llm_successful_calls": summary_data["llm_successful_calls"],
@@ -145,6 +146,38 @@ def screener_bronze(context: AssetExecutionContext) -> MaterializeResult:
 
 
 @asset(group_name="real_estate", deps=[screener_bronze])
+def screener_llm_enrichment(context: AssetExecutionContext) -> MaterializeResult:
+    """Fill the evidence cache independently of the daily Silver/Gold build."""
+    day = datetime.now(timezone.utc).date().isoformat()
+    s3 = _s3()
+    bronze = s3.get_object(Bucket=os.environ["S3_BUCKET"],
+                           Key=f"bronze/screener/date={day}/listings.jsonl")["Body"].read()
+    rows = [json.loads(line) for line in bronze.decode("utf-8").splitlines() if line]
+    current_rows, _ = split_current_and_history(rows)
+    dataset = deduplicate(current_rows)
+    enricher = PropertyEnricher(
+        s3, os.environ["S3_BUCKET"],
+        max_new_calls=int(os.environ.get("SCREENER_LLM_MAX_NEW_CALLS", "250")),
+        max_elapsed_seconds=int(os.environ.get("SCREENER_LLM_MAX_SECONDS", "300")),
+    )
+    for row in dataset["listings"]:
+        enricher.enrich(row)
+    context.log.info("LLM cache: %s successes, %s cache hits, %s failures, %s quota skips",
+                     enricher.successful_calls, enricher.cache_hits,
+                     enricher.failed_calls, enricher.quota_skipped)
+    return MaterializeResult(metadata={
+        "eligible_properties": enricher.eligible_rows,
+        "new_calls": enricher.new_calls,
+        "successful_calls": enricher.successful_calls,
+        "cache_hits": enricher.cache_hits,
+        "failed_calls": enricher.failed_calls,
+        "quota_skipped": enricher.quota_skipped,
+        "budget_skipped": enricher.budget_skipped,
+        "time_skipped": enricher.time_skipped,
+    })
+
+
+@asset(group_name="real_estate", deps=[screener_bronze])
 def screener_silver(context: AssetExecutionContext) -> MaterializeResult:
     """Deduplicate verified history separately from the current inventory."""
     day = datetime.now(timezone.utc).date().isoformat()
@@ -155,11 +188,7 @@ def screener_silver(context: AssetExecutionContext) -> MaterializeResult:
     current_rows, history_rows = split_current_and_history(rows)
     historical = deduplicate(history_rows)
     dataset = deduplicate(current_rows)
-    enricher = PropertyEnricher(
-        s3, os.environ["S3_BUCKET"],
-        max_new_calls=int(os.environ.get("SCREENER_LLM_MAX_NEW_CALLS", "250")),
-        max_elapsed_seconds=int(os.environ.get("SCREENER_LLM_MAX_SECONDS", "300")),
-    )
+    enricher = PropertyEnricher(s3, os.environ["S3_BUCKET"], cache_only=True)
     dataset["listings"] = [enricher.enrich(row) for row in dataset["listings"]]
     completed = sum((row.get("llm_enrichment") or {}).get("status") == "completed"
                     for row in dataset["listings"])
@@ -172,6 +201,7 @@ def screener_silver(context: AssetExecutionContext) -> MaterializeResult:
                "llm_quota_skipped_properties": enricher.quota_skipped,
                "llm_budget_skipped_properties": enricher.budget_skipped,
                "llm_time_skipped_properties": enricher.time_skipped,
+               "llm_cache_pending_properties": enricher.cache_pending,
                "llm_eligible_properties": enricher.eligible_rows,
                "llm_cache_hits": enricher.cache_hits,
                "llm_successful_calls": enricher.successful_calls,
@@ -188,18 +218,8 @@ def screener_silver(context: AssetExecutionContext) -> MaterializeResult:
     s3.put_object(Bucket=os.environ["S3_BUCKET"], Key=key, Body=body,
                   ContentType="application/json")
     context.log.info("Curated %s unique properties", dataset["unique_count"])
-    if enricher.quota_skipped:
-        context.log.warning("Gemini quota exhausted; %s properties retained without new enrichment",
-                            enricher.quota_skipped)
-    if enricher.budget_skipped:
-        context.log.warning("Silver new-call budget exhausted; %s properties retained without new enrichment",
-                            enricher.budget_skipped)
-    if enricher.time_skipped:
-        context.log.warning("Silver time budget exhausted; %s properties retained without new enrichment",
-                            enricher.time_skipped)
-    if enricher.failed_calls:
-        context.log.warning("Gemini failed for %s properties; they remain eligible for the next run",
-                            enricher.failed_calls)
+    if enricher.cache_pending:
+        context.log.info("%s properties await a completed LLM cache result", enricher.cache_pending)
     return MaterializeResult(metadata={
         "unique_properties": dataset["unique_count"],
         "duplicates": dataset["duplicate_count"],
@@ -213,6 +233,7 @@ def screener_silver(context: AssetExecutionContext) -> MaterializeResult:
         "llm_quota_skipped_properties": enricher.quota_skipped,
         "llm_budget_skipped_properties": enricher.budget_skipped,
         "llm_time_skipped_properties": enricher.time_skipped,
+        "llm_cache_pending_properties": enricher.cache_pending,
         "object": MetadataValue.text(key),
     })
 

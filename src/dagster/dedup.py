@@ -247,6 +247,7 @@ def summary(dataset, as_of=None):
         "llm_quota_skipped_properties": dataset.get("llm_quota_skipped_properties", 0),
         "llm_budget_skipped_properties": dataset.get("llm_budget_skipped_properties", 0),
         "llm_time_skipped_properties": dataset.get("llm_time_skipped_properties", 0),
+        "llm_cache_pending_properties": dataset.get("llm_cache_pending_properties", 0),
         "llm_eligible_properties": dataset.get("llm_eligible_properties", 0),
         "llm_cache_hits": dataset.get("llm_cache_hits", 0),
         "llm_successful_calls": dataset.get("llm_successful_calls", 0),
