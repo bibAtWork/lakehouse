@@ -140,6 +140,10 @@ def _publish_metrics(summary_data, history_data=None, previous_history=None):
             lines.append(f'lakehouse_screener_historical_median_price_per_sqm_by_month{{month="{label(row["month"])}"}} {row["median_eur"]}')
         for row in removed_cohorts(previous_history, history_data, "average_price_per_sqm_by_month", ("month",)):
             lines.append(f'lakehouse_screener_historical_median_price_per_sqm_by_month{{month="{label(row["month"])}"}} 0')
+        for row in history_data["average_price_per_sqm_by_quarter"]:
+            lines.append(f'lakehouse_screener_historical_median_price_per_sqm_by_quarter{{quarter="{label(row["quarter"])}"}} {row["median_eur"]}')
+        for row in removed_cohorts(previous_history, history_data, "average_price_per_sqm_by_quarter", ("quarter",)):
+            lines.append(f'lakehouse_screener_historical_median_price_per_sqm_by_quarter{{quarter="{label(row["quarter"])}"}} 0')
         for group, label_names in (
             ("price_per_sqm_by_region_month", ("region", "month")),
             ("price_per_sqm_by_region_quarter", ("region", "quarter")),
