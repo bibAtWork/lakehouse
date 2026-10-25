@@ -13,6 +13,13 @@ import unicodedata
 # useful asking-price-per-m² observation. Keep the listing in Silver.
 MIN_PRICE_PER_SQM_AREA_M2 = 10
 
+# Indicative PLZ3 market baskets. These are postal areas, not district borders.
+REGION_POSTAL_PREFIXES = {
+    "Reutlingen": {"727"},
+    "Tübingen": {"720"},
+    "Stuttgarter Speckgürtel": {str(prefix) for prefix in range(707, 716)},
+}
+
 
 def _text(value):
     if value is None:
@@ -210,6 +217,8 @@ def summary(dataset, as_of=None):
     by_quarter = defaultdict(list)
     by_plz3_quarter = defaultdict(list)
     by_plz3_month = defaultdict(list)
+    by_region_month = defaultdict(list)
+    by_region_quarter = defaultdict(list)
     asking_price_by_plz3_last_12m = defaultdict(list)
     recent_house_prices = []
     new_properties_24h = 0
@@ -240,6 +249,10 @@ def summary(dataset, as_of=None):
             if plz3:
                 by_plz3_quarter[(plz3, quarter)].append(value)
                 by_plz3_month[(plz3, month)].append(value)
+                for region, prefixes in REGION_POSTAL_PREFIXES.items():
+                    if plz3 in prefixes:
+                        by_region_month[(region, month)].append(value)
+                        by_region_quarter[(region, quarter)].append(value)
 
     def grouped(groups, labels):
         return [{**dict(zip(labels, key if isinstance(key, tuple) else (key,))),
@@ -280,6 +293,8 @@ def summary(dataset, as_of=None):
         "average_price_per_sqm_by_quarter": grouped(by_quarter, ("quarter",)),
         "average_price_per_sqm_by_plz3_quarter": grouped(by_plz3_quarter, ("plz3", "quarter")),
         "average_price_per_sqm_by_plz3_month": grouped(by_plz3_month, ("plz3", "month")),
+        "price_per_sqm_by_region_month": grouped(by_region_month, ("region", "month")),
+        "price_per_sqm_by_region_quarter": grouped(by_region_quarter, ("region", "quarter")),
         "by_city": [{"city": city, "count": count} for city, count in cities.most_common(10)],
         "sources_by_provider": [{"provider": provider, "count": count}
                                 for provider, count in providers.most_common()],

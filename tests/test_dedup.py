@@ -165,6 +165,22 @@ class DedupTests(unittest.TestCase):
         self.assertEqual((monthly["count"], monthly["median_eur"]), (3, 2000))
         self.assertEqual(result["average_price_per_sqm_by_plz3_month"][0]["median_eur"], 2000)
 
+    def test_postal_region_baskets_use_one_property_per_listing_group(self):
+        rows = [
+            row(1, postal_code="72764", price="300000", living_area_m2="100",
+                first_seen_at="2026-10-01T00:00:00Z"),
+            row(2, postal_code="72070", title="Tübingen", price="500000",
+                living_area_m2="100", first_seen_at="2026-10-02T00:00:00Z"),
+            row(3, postal_code="71034", title="Böblingen", price="700000",
+                living_area_m2="100", first_seen_at="2026-10-03T00:00:00Z"),
+        ]
+        result = dedup.summary(dedup.deduplicate(rows), as_of="2026-10-25T00:00:00Z")
+        baskets = {item["region"]: item for item in result["price_per_sqm_by_region_month"]}
+        self.assertEqual(baskets["Reutlingen"]["median_eur"], 3000)
+        self.assertEqual(baskets["Tübingen"]["median_eur"], 5000)
+        self.assertEqual(baskets["Stuttgarter Speckgürtel"]["median_eur"], 7000)
+        self.assertEqual(len(result["price_per_sqm_by_region_quarter"]), 3)
+
 
 if __name__ == "__main__":
     unittest.main()

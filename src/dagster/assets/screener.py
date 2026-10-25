@@ -89,6 +89,14 @@ def _publish_metrics(summary_data, history_data=None, previous_history=None):
             lines.append(f'lakehouse_screener_{group}_properties{{{labels}}} {row["count"]}')
             if group == "average_price_per_sqm_by_plz3_month":
                 lines.append(f'lakehouse_screener_median_price_per_sqm_by_plz3_month{{{labels}}} {row["median_eur"]}')
+    for group, label_names in (
+        ("price_per_sqm_by_region_month", ("region", "month")),
+        ("price_per_sqm_by_region_quarter", ("region", "quarter")),
+    ):
+        for row in summary_data[group]:
+            labels = ",".join(f'{name}="{label(row[name])}"' for name in label_names)
+            lines.append(f'lakehouse_screener_{group}_median_eur{{{labels}}} {row["median_eur"]}')
+            lines.append(f'lakehouse_screener_{group}_properties{{{labels}}} {row["count"]}')
     if history_data:
         lines.append(f'lakehouse_screener_manually_imported_listings {history_data["manual_imported_listings"]}')
         for name in (
@@ -130,6 +138,18 @@ def _publish_metrics(summary_data, history_data=None, previous_history=None):
             lines.append(f'lakehouse_screener_historical_median_price_per_sqm_by_month{{month="{label(row["month"])}"}} {row["median_eur"]}')
         for row in removed_cohorts(previous_history, history_data, "average_price_per_sqm_by_month", ("month",)):
             lines.append(f'lakehouse_screener_historical_median_price_per_sqm_by_month{{month="{label(row["month"])}"}} 0')
+        for group, label_names in (
+            ("price_per_sqm_by_region_month", ("region", "month")),
+            ("price_per_sqm_by_region_quarter", ("region", "quarter")),
+        ):
+            for row in history_data[group]:
+                labels = ",".join(f'{name}="{label(row[name])}"' for name in label_names)
+                lines.append(f'lakehouse_screener_historical_{group}_median_eur{{{labels}}} {row["median_eur"]}')
+                lines.append(f'lakehouse_screener_historical_{group}_properties{{{labels}}} {row["count"]}')
+            for row in removed_cohorts(previous_history, history_data, group, label_names):
+                labels = ",".join(f'{name}="{label(row[name])}"' for name in label_names)
+                lines.append(f'lakehouse_screener_historical_{group}_median_eur{{{labels}}} 0')
+                lines.append(f'lakehouse_screener_historical_{group}_properties{{{labels}}} 0')
     request = Request(endpoint, data=("\n".join(lines) + "\n").encode("utf-8"),
                       headers={"Content-Type": "text/plain"}, method="POST")
     with urlopen(request, timeout=15) as response:
