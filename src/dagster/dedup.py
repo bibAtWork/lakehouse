@@ -9,9 +9,11 @@ import re
 import unicodedata
 
 
-# A 1 m² "living area" on a million-euro home is a source-data error, not a
-# useful asking-price-per-m² observation. Keep the listing in Silver.
-MIN_PRICE_PER_SQM_AREA_M2 = 10
+# Conservative quality bounds for ordinary German residential asking prices.
+# They flag suspect observations; source price and area remain in Silver.
+MIN_PRICE_PER_SQM_AREA_M2 = Decimal("20")
+MIN_PRICE_PER_SQM_EUR = Decimal("500")
+MAX_PRICE_PER_SQM_EUR = Decimal("20000")
 
 # Indicative PLZ3 market baskets. These are postal areas, not district borders.
 REGION_POSTAL_PREFIXES = {
@@ -65,9 +67,36 @@ def _number(value):
     if value is None or value == "":
         return None
     try:
-        return Decimal(str(value))
-    except InvalidOperation:
+        number = Decimal(str(value))
+        return number if number.is_finite() else None
+    except (InvalidOperation, ValueError):
         return None
+
+
+def price_per_sqm_quality(row):
+    """Classify a ratio without discarding or rewriting the source observation."""
+    price, area = _number(row.get("price")), _number(row.get("living_area_m2"))
+    if price is None or area is None:
+        return {"status": "insufficient_data", "reason": "missing_price_or_area", "value_eur": None}
+    if not price.is_finite() or not area.is_finite() or price <= 0 or area <= 0:
+        return {"status": "implausible", "reason": "non_positive_or_non_finite", "value_eur": None}
+    ratio = price / area
+    value = float(ratio)
+    if area < MIN_PRICE_PER_SQM_AREA_M2:
+        reason = "living_area_below_20_m2"
+    elif ratio < MIN_PRICE_PER_SQM_EUR:
+        reason = "below_500_eur"
+    elif ratio > MAX_PRICE_PER_SQM_EUR:
+        reason = "above_20000_eur"
+    else:
+        reason = None
+    return {"status": "implausible" if reason else "plausible", "reason": reason,
+            "value_eur": value}
+
+
+def annotate_price_per_sqm(row):
+    row["price_per_sqm_quality"] = price_per_sqm_quality(row)
+    return row
 
 
 def _timestamp(value):
@@ -183,7 +212,7 @@ def deduplicate(rows):
         canonical["sources"] = [{field: row.get(field) for field in
                                  ("listing_id", "provider", "source_id", "url")}
                                 for row in members]
-        properties.append(canonical)
+        properties.append(annotate_price_per_sqm(canonical))
     return {"listings": properties, "match_evidence": evidence,
             "source_count": len(rows), "unique_count": len(properties),
             "duplicate_count": len(rows) - len(properties)}
@@ -207,12 +236,11 @@ def summary(dataset, as_of=None):
     if now is None:
         raise ValueError("as_of must be an ISO 8601 timestamp with timezone")
     priced = [row for row in properties if _number(row.get("price")) is not None]
-    per_sqm = [float(_number(row["price"]) / _number(row["living_area_m2"]))
-               for row in priced if _number(row.get("living_area_m2")) and
-               _number(row["living_area_m2"]) >= MIN_PRICE_PER_SQM_AREA_M2 and
-               _number(row["price"]) > 0]
+    quality = [price_per_sqm_quality(row) for row in properties]
+    per_sqm = [item["value_eur"] for item in quality if item["status"] == "plausible"]
     implausible_area = sum(0 < _number(row.get("living_area_m2")) < MIN_PRICE_PER_SQM_AREA_M2
                            for row in priced if _number(row.get("living_area_m2")) is not None)
+    excluded = sum(item["status"] == "implausible" for item in quality)
     by_plz3 = defaultdict(list)
     by_month = defaultdict(list)
     by_quarter = defaultdict(list)
@@ -227,7 +255,7 @@ def summary(dataset, as_of=None):
         seen = _timestamp(row.get("first_seen_at"))
         if seen and now - timedelta(days=1) <= seen <= now:
             new_properties_24h += 1
-        price, area = _number(row.get("price")), _number(row.get("living_area_m2"))
+        price = _number(row.get("price"))
         postal = str(row.get("postal_code") or "")
         plz3 = postal[:3] if re.fullmatch(r"\d{5}", postal) else None
         if seen and now - timedelta(days=365) <= seen <= now and price is not None and price > 0:
@@ -235,9 +263,10 @@ def summary(dataset, as_of=None):
                 asking_price_by_plz3_last_12m[plz3].append(float(price))
             if row.get("property_type") in HOUSE_TYPES:
                 recent_house_prices.append(float(price))
-        if price is None or area is None or price <= 0 or area < MIN_PRICE_PER_SQM_AREA_M2:
+        ratio_quality = price_per_sqm_quality(row)
+        if ratio_quality["status"] != "plausible":
             continue
-        value = float(price / area)
+        value = ratio_quality["value_eur"]
         if plz3:
             by_plz3[plz3].append(value)
         if seen:
@@ -285,6 +314,7 @@ def summary(dataset, as_of=None):
         "median_price_per_sqm_eur": float(median(per_sqm)) if per_sqm else None,
         "average_price_per_sqm_eur": float(mean(per_sqm)) if per_sqm else None,
         "price_per_sqm_implausible_area_properties": implausible_area,
+        "price_per_sqm_excluded_properties": excluded,
         "new_properties_24h": new_properties_24h,
         "average_asking_house_price_last_12m_eur": float(mean(recent_house_prices)) if recent_house_prices else None,
         "asking_house_price_last_12m_properties": len(recent_house_prices),

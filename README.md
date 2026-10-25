@@ -11,7 +11,7 @@ The daily real-estate pipeline consumes records already produced by the real-est
 
 The regional BI baskets use PLZ3 as an approximation: Reutlingen `727`, Tübingen `720`, and Stuttgarter Speckgürtel `707`–`715`. They are not administrative district boundaries. Each basket publishes monthly and quarterly median asking price per m² and the underlying property count.
 
-Price-per-m² metrics require a positive asking price and at least 10 m² of living area. A source listing reporting 1 m² with a million-euro price would otherwise dominate the mean; the listing remains in Silver, and Gold counts properties excluded by this area rule.
+Silver keeps the original asking price and living area and adds `price_per_sqm_quality` with a status, reason, and calculated EUR/m² value. For ordinary residential price-per-m² comparisons, a plausible observation needs at least 20 m² of living area and a ratio from €500 to €20,000/m² (inclusive). Smaller areas, nonpositive values, and ratios outside that band are flagged rather than deleted. Missing price or area is marked `insufficient_data`. Gold price-per-m² averages and medians use only plausible observations and publish the excluded count; listing and price totals still include flagged rows. These bounds are data-quality heuristics, not assertions that an unusual property is impossible.
 
 `screener_bronze_refresh` archives the screener at 03:00 UTC. `screener_llm_refresh` fills the enrichment cache at 03:15 and every three hours through 21:15 UTC. `screener_bi_refresh` builds Silver and Gold at 04:00 UTC; later LLM results enter the next daily BI snapshot. The screener remains the sole property-site collector. The lakehouse keeps dated snapshots so BI history does not depend on the metrics retention window.
 
