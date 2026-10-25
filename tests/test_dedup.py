@@ -18,6 +18,22 @@ def row(listing_id, **changes):
 
 
 class DedupTests(unittest.TestCase):
+    def test_historical_cohort_median_resists_small_area_outlier(self):
+        rows = [
+            row(1, price="400000", living_area_m2="100", city="A",
+                first_seen_at="2026-02-01T10:00:00Z"),
+            row(2, price="500000", living_area_m2="100", city="B",
+                first_seen_at="2026-02-02T10:00:00Z"),
+            row(3, price="900000", living_area_m2="10", city="C",
+                first_seen_at="2026-02-03T10:00:00Z"),
+        ]
+        result = dedup.summary(dedup.deduplicate(rows), as_of="2026-10-25T00:00:00Z")
+        self.assertEqual(result["average_price_per_sqm_by_month"], [
+            {"month": "2026-02", "count": 3, "average_eur": 33000,
+             "median_eur": 5000},
+        ])
+        self.assertEqual(result["average_price_per_sqm_by_quarter"][0]["median_eur"], 5000)
+
     def test_given_manual_history_when_summarizing_then_current_inventory_stays_current(self):
         archive = row(1, first_seen_at="2026-01-02T10:00:00Z", manual_import=True,
                       price="300000", living_area_m2="100")
