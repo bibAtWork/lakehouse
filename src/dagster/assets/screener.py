@@ -10,7 +10,7 @@ import boto3
 from botocore.config import Config
 from botocore.exceptions import ClientError
 from dagster import AssetExecutionContext, MaterializeResult, MetadataValue, asset
-from lakehouse.dedup import deduplicate, removed_cohorts, split_current_and_history, summary
+from lakehouse.dedup import annotate_price_per_sqm, deduplicate, removed_cohorts, split_current_and_history, summary
 from lakehouse.enrichment import PropertyEnricher
 
 
@@ -59,6 +59,7 @@ def _publish_metrics(summary_data, history_data=None, previous_history=None):
         "median_price_per_sqm_eur": summary_data["median_price_per_sqm_eur"],
         "average_price_per_sqm_eur": summary_data["average_price_per_sqm_eur"],
         "price_per_sqm_implausible_area_properties": summary_data["price_per_sqm_implausible_area_properties"],
+        "price_per_sqm_excluded_properties": summary_data["price_per_sqm_excluded_properties"],
         "new_properties_24h": summary_data["new_properties_24h"],
         "average_asking_house_price_last_12m_eur": summary_data["average_asking_house_price_last_12m_eur"],
         "asking_house_price_last_12m_properties": summary_data["asking_house_price_last_12m_properties"],
@@ -105,6 +106,7 @@ def _publish_metrics(summary_data, history_data=None, previous_history=None):
             "source_listings", "unique_properties", "duplicate_listings", "duplicate_rate",
             "priced_properties", "median_price_eur", "median_price_per_sqm_eur",
             "average_price_per_sqm_eur", "price_per_sqm_implausible_area_properties",
+            "price_per_sqm_excluded_properties",
         ):
             value = history_data.get(name)
             if value is not None:
@@ -230,12 +232,13 @@ def screener_silver(context: AssetExecutionContext) -> MaterializeResult:
     historical = deduplicate(history_rows)
     dataset = deduplicate(current_rows)
     enricher = PropertyEnricher(s3, os.environ["S3_BUCKET"], cache_only=True)
-    dataset["listings"] = [enricher.enrich(row) for row in dataset["listings"]]
+    dataset["listings"] = [annotate_price_per_sqm(enricher.enrich(row))
+                           for row in dataset["listings"]]
     completed = sum((row.get("llm_enrichment") or {}).get("status") == "completed"
                     for row in dataset["listings"])
     accepted = sum(bool((row.get("llm_evidence") or {}).get("quotes"))
                    for row in dataset["listings"])
-    dataset = {"algorithm_version": 1, "snapshot_at": datetime.now(timezone.utc).isoformat(),
+    dataset = {"algorithm_version": 2, "snapshot_at": datetime.now(timezone.utc).isoformat(),
                "source_count": dataset["source_count"],
                "unique_count": dataset["unique_count"],
                "duplicate_count": dataset["duplicate_count"],

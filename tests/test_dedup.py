@@ -29,10 +29,32 @@ class DedupTests(unittest.TestCase):
         ]
         result = dedup.summary(dedup.deduplicate(rows), as_of="2026-10-25T00:00:00Z")
         self.assertEqual(result["average_price_per_sqm_by_month"], [
-            {"month": "2026-02", "count": 3, "average_eur": 33000,
-             "median_eur": 5000},
+            {"month": "2026-02", "count": 2, "average_eur": 4500,
+             "median_eur": 4500},
         ])
-        self.assertEqual(result["average_price_per_sqm_by_quarter"][0]["median_eur"], 5000)
+        self.assertEqual(result["average_price_per_sqm_by_quarter"][0]["median_eur"], 4500)
+
+    def test_silver_keeps_source_values_and_marks_implausible_ratios(self):
+        rows = [
+            row(1, title="Ordinary", price="400000", living_area_m2="100"),
+            row(2, title="Tiny", price="300000", living_area_m2="10"),
+            row(3, title="High ratio", price="2500000", living_area_m2="100"),
+            row(4, title="Low ratio", price="30000", living_area_m2="100"),
+            row(5, title="No area", city="Stuttgart", price="300000", living_area_m2=None),
+        ]
+        dataset = dedup.deduplicate(rows)
+        properties = {item["title"]: item for item in dataset["listings"]}
+        self.assertEqual(len(properties), 5)
+        self.assertEqual(properties["Tiny"]["price"], "300000")
+        self.assertEqual(properties["Tiny"]["living_area_m2"], "10")
+        self.assertEqual(properties["Tiny"]["price_per_sqm_quality"]["reason"], "living_area_below_20_m2")
+        self.assertEqual(properties["High ratio"]["price_per_sqm_quality"]["reason"], "above_20000_eur")
+        self.assertEqual(properties["Low ratio"]["price_per_sqm_quality"]["reason"], "below_500_eur")
+        self.assertEqual(properties["No area"]["price_per_sqm_quality"]["status"], "insufficient_data")
+        self.assertEqual(properties["Ordinary"]["price_per_sqm_quality"]["status"], "plausible")
+        result = dedup.summary(dataset)
+        self.assertEqual(result["average_price_per_sqm_eur"], 4000)
+        self.assertEqual(result["price_per_sqm_excluded_properties"], 3)
 
     def test_given_manual_history_when_summarizing_then_current_inventory_stays_current(self):
         archive = row(1, first_seen_at="2026-01-02T10:00:00Z", manual_import=True,
