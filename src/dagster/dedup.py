@@ -209,17 +209,27 @@ def summary(dataset, as_of=None):
     by_month = defaultdict(list)
     by_quarter = defaultdict(list)
     by_plz3_quarter = defaultdict(list)
+    by_plz3_month = defaultdict(list)
+    asking_price_by_plz3_last_12m = defaultdict(list)
+    recent_house_prices = []
     new_properties_24h = 0
     for row in properties:
         seen = _timestamp(row.get("first_seen_at"))
         if seen and now - timedelta(days=1) <= seen <= now:
             new_properties_24h += 1
         price, area = _number(row.get("price")), _number(row.get("living_area_m2"))
+        postal = str(row.get("postal_code") or "")
+        plz3 = postal[:3] if re.fullmatch(r"\d{5}", postal) else None
+        if seen and now - timedelta(days=365) <= seen <= now and price is not None and price > 0:
+            if plz3:
+                asking_price_by_plz3_last_12m[plz3].append(float(price))
+            if row.get("property_type") in {
+                "detached_house", "semi_detached_house", "multi_family_house", "terraced_house"
+            }:
+                recent_house_prices.append(float(price))
         if price is None or area is None or price <= 0 or area < MIN_PRICE_PER_SQM_AREA_M2:
             continue
         value = float(price / area)
-        postal = str(row.get("postal_code") or "")
-        plz3 = postal[:3] if re.fullmatch(r"\d{5}", postal) else None
         if plz3:
             by_plz3[plz3].append(value)
         if seen:
@@ -229,10 +239,12 @@ def summary(dataset, as_of=None):
             by_quarter[quarter].append(value)
             if plz3:
                 by_plz3_quarter[(plz3, quarter)].append(value)
+                by_plz3_month[(plz3, month)].append(value)
 
     def grouped(groups, labels):
         return [{**dict(zip(labels, key if isinstance(key, tuple) else (key,))),
-                 "count": len(values), "average_eur": float(mean(values))}
+                 "count": len(values), "average_eur": float(mean(values)),
+                 "median_eur": float(median(values))}
                 for key, values in sorted(groups.items())]
     cities = Counter((row.get("city") or "Unknown").strip() for row in properties)
     providers = Counter(source.get("provider") or "Unknown" for row in properties
@@ -260,10 +272,14 @@ def summary(dataset, as_of=None):
         "average_price_per_sqm_eur": float(mean(per_sqm)) if per_sqm else None,
         "price_per_sqm_implausible_area_properties": implausible_area,
         "new_properties_24h": new_properties_24h,
+        "average_asking_house_price_last_12m_eur": float(mean(recent_house_prices)) if recent_house_prices else None,
+        "asking_house_price_last_12m_properties": len(recent_house_prices),
+        "average_asking_price_by_plz3_last_12m": grouped(asking_price_by_plz3_last_12m, ("plz3",)),
         "average_price_per_sqm_by_plz3": grouped(by_plz3, ("plz3",)),
         "average_price_per_sqm_by_month": grouped(by_month, ("month",)),
         "average_price_per_sqm_by_quarter": grouped(by_quarter, ("quarter",)),
         "average_price_per_sqm_by_plz3_quarter": grouped(by_plz3_quarter, ("plz3", "quarter")),
+        "average_price_per_sqm_by_plz3_month": grouped(by_plz3_month, ("plz3", "month")),
         "by_city": [{"city": city, "count": count} for city, count in cities.most_common(10)],
         "sources_by_provider": [{"provider": provider, "count": count}
                                 for provider, count in providers.most_common()],

@@ -119,21 +119,51 @@ class DedupTests(unittest.TestCase):
         self.assertEqual(result["new_properties_24h"], 2)
         self.assertEqual(result["price_per_sqm_implausible_area_properties"], 1)
         self.assertEqual(result["average_price_per_sqm_by_plz3"], [
-            {"plz3": "720", "count": 1, "average_eur": 6000},
-            {"plz3": "727", "count": 1, "average_eur": 3000},
+            {"plz3": "720", "count": 1, "average_eur": 6000, "median_eur": 6000},
+            {"plz3": "727", "count": 1, "average_eur": 3000, "median_eur": 3000},
         ])
         self.assertEqual(result["average_price_per_sqm_by_month"], [
-            {"month": "2026-09", "count": 1, "average_eur": 3000},
-            {"month": "2026-10", "count": 1, "average_eur": 6000},
+            {"month": "2026-09", "count": 1, "average_eur": 3000, "median_eur": 3000},
+            {"month": "2026-10", "count": 1, "average_eur": 6000, "median_eur": 6000},
         ])
         self.assertEqual(result["average_price_per_sqm_by_quarter"], [
-            {"quarter": "2026-Q3", "count": 1, "average_eur": 3000},
-            {"quarter": "2026-Q4", "count": 1, "average_eur": 6000},
+            {"quarter": "2026-Q3", "count": 1, "average_eur": 3000, "median_eur": 3000},
+            {"quarter": "2026-Q4", "count": 1, "average_eur": 6000, "median_eur": 6000},
         ])
         self.assertEqual(result["average_price_per_sqm_by_plz3_quarter"], [
-            {"plz3": "720", "quarter": "2026-Q4", "count": 1, "average_eur": 6000},
-            {"plz3": "727", "quarter": "2026-Q3", "count": 1, "average_eur": 3000},
+            {"plz3": "720", "quarter": "2026-Q4", "count": 1, "average_eur": 6000, "median_eur": 6000},
+            {"plz3": "727", "quarter": "2026-Q3", "count": 1, "average_eur": 3000, "median_eur": 3000},
         ])
+        self.assertEqual(result["average_price_per_sqm_by_plz3_month"][0]["month"], "2026-10")
+
+    def test_recent_house_price_excludes_apartments_and_old_listings(self):
+        rows = [
+            row(1, title="Detached", property_type="detached_house", price="400000",
+                first_seen_at="2026-10-01T00:00:00Z"),
+            row(2, title="Apartment", property_type="apartment", price="200000",
+                first_seen_at="2026-10-01T00:00:00Z"),
+            row(3, title="Old house", property_type="detached_house", price="900000",
+                first_seen_at="2025-01-01T00:00:00Z"),
+        ]
+        result = dedup.summary(dedup.deduplicate(rows), as_of="2026-10-25T00:00:00Z")
+        self.assertEqual(result["average_asking_house_price_last_12m_eur"], 400000)
+        self.assertEqual(result["asking_house_price_last_12m_properties"], 1)
+        self.assertEqual(result["average_asking_price_by_plz3_last_12m"][0]["count"], 2)
+
+    def test_monthly_median_uses_deduplicated_properties(self):
+        rows = [
+            row(1, price="100000", living_area_m2="100", first_seen_at="2026-10-01T00:00:00Z"),
+            row(2, price="100000", living_area_m2="100", first_seen_at="2026-10-02T00:00:00Z",
+                provider="sparkasse"),
+            row(3, title="Second", price="200000", living_area_m2="100",
+                first_seen_at="2026-10-03T00:00:00Z"),
+            row(4, title="Third", price="900000", living_area_m2="100",
+                first_seen_at="2026-10-04T00:00:00Z"),
+        ]
+        result = dedup.summary(dedup.deduplicate(rows), as_of="2026-10-25T00:00:00Z")
+        monthly = result["average_price_per_sqm_by_month"][0]
+        self.assertEqual((monthly["count"], monthly["median_eur"]), (3, 2000))
+        self.assertEqual(result["average_price_per_sqm_by_plz3_month"][0]["median_eur"], 2000)
 
 
 if __name__ == "__main__":
