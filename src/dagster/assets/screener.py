@@ -58,6 +58,8 @@ def _publish_metrics(summary_data, history_data=None, previous_history=None):
         "average_price_per_sqm_eur": summary_data["average_price_per_sqm_eur"],
         "price_per_sqm_implausible_area_properties": summary_data["price_per_sqm_implausible_area_properties"],
         "new_properties_24h": summary_data["new_properties_24h"],
+        "average_asking_house_price_last_12m_eur": summary_data["average_asking_house_price_last_12m_eur"],
+        "asking_house_price_last_12m_properties": summary_data["asking_house_price_last_12m_properties"],
         "snapshot_timestamp_seconds": datetime.now(timezone.utc).timestamp(),
     }
     lines = [f"lakehouse_screener_{name} {value}" for name, value in metrics.items()
@@ -78,11 +80,15 @@ def _publish_metrics(summary_data, history_data=None, previous_history=None):
         ("average_price_per_sqm_by_month", ("month",)),
         ("average_price_per_sqm_by_quarter", ("quarter",)),
         ("average_price_per_sqm_by_plz3_quarter", ("plz3", "quarter")),
+        ("average_price_per_sqm_by_plz3_month", ("plz3", "month")),
+        ("average_asking_price_by_plz3_last_12m", ("plz3",)),
     ):
         for row in summary_data[group]:
             labels = ",".join(f'{name}="{label(row[name])}"' for name in label_names)
             lines.append(f'lakehouse_screener_{group}{{{labels}}} {row["average_eur"]}')
             lines.append(f'lakehouse_screener_{group}_properties{{{labels}}} {row["count"]}')
+            if group == "average_price_per_sqm_by_plz3_month":
+                lines.append(f'lakehouse_screener_median_price_per_sqm_by_plz3_month{{{labels}}} {row["median_eur"]}')
     if history_data:
         lines.append(f'lakehouse_screener_manually_imported_listings {history_data["manual_imported_listings"]}')
         for name in (
@@ -106,15 +112,24 @@ def _publish_metrics(summary_data, history_data=None, previous_history=None):
             ("average_price_per_sqm_by_month", ("month",)),
             ("average_price_per_sqm_by_quarter", ("quarter",)),
             ("average_price_per_sqm_by_plz3_quarter", ("plz3", "quarter")),
+            ("average_price_per_sqm_by_plz3_month", ("plz3", "month")),
         ):
             for row in history_data[group]:
                 labels = ",".join(f'{name}="{label(row[name])}"' for name in label_names)
                 lines.append(f'lakehouse_screener_historical_{group}{{{labels}}} {row["average_eur"]}')
                 lines.append(f'lakehouse_screener_historical_{group}_properties{{{labels}}} {row["count"]}')
+                if group == "average_price_per_sqm_by_plz3_month":
+                    lines.append(f'lakehouse_screener_historical_median_price_per_sqm_by_plz3_month{{{labels}}} {row["median_eur"]}')
             for row in removed_cohorts(previous_history, history_data, group, label_names):
                 labels = ",".join(f'{name}="{label(row[name])}"' for name in label_names)
                 lines.append(f'lakehouse_screener_historical_{group}{{{labels}}} 0')
                 lines.append(f'lakehouse_screener_historical_{group}_properties{{{labels}}} 0')
+                if group == "average_price_per_sqm_by_plz3_month":
+                    lines.append(f'lakehouse_screener_historical_median_price_per_sqm_by_plz3_month{{{labels}}} 0')
+        for row in history_data["average_price_per_sqm_by_month"]:
+            lines.append(f'lakehouse_screener_historical_median_price_per_sqm_by_month{{month="{label(row["month"])}"}} {row["median_eur"]}')
+        for row in removed_cohorts(previous_history, history_data, "average_price_per_sqm_by_month", ("month",)):
+            lines.append(f'lakehouse_screener_historical_median_price_per_sqm_by_month{{month="{label(row["month"])}"}} 0')
     request = Request(endpoint, data=("\n".join(lines) + "\n").encode("utf-8"),
                       headers={"Content-Type": "text/plain"}, method="POST")
     with urlopen(request, timeout=15) as response:
