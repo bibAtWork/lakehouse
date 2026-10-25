@@ -40,6 +40,8 @@ def _publish_metrics(summary_data, history_data=None, previous_history=None):
     metrics = {
         "source_listings": summary_data["source_listings"],
         "unique_properties": summary_data["unique_properties"],
+        "classified_properties": summary_data["classified_properties"],
+        "classified_house_properties": summary_data["classified_house_properties"],
         "duplicate_listings": summary_data["duplicate_listings"],
         "duplicate_rate": summary_data["duplicate_rate"],
         "llm_quota_skipped_properties": summary_data["llm_quota_skipped_properties"],

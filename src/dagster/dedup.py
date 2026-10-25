@@ -19,6 +19,7 @@ REGION_POSTAL_PREFIXES = {
     "Tübingen": {"720"},
     "Stuttgarter Speckgürtel": {str(prefix) for prefix in range(707, 716)},
 }
+HOUSE_TYPES = {"detached_house", "semi_detached_house", "multi_family_house", "terraced_house"}
 
 
 def _text(value):
@@ -232,9 +233,7 @@ def summary(dataset, as_of=None):
         if seen and now - timedelta(days=365) <= seen <= now and price is not None and price > 0:
             if plz3:
                 asking_price_by_plz3_last_12m[plz3].append(float(price))
-            if row.get("property_type") in {
-                "detached_house", "semi_detached_house", "multi_family_house", "terraced_house"
-            }:
+            if row.get("property_type") in HOUSE_TYPES:
                 recent_house_prices.append(float(price))
         if price is None or area is None or price <= 0 or area < MIN_PRICE_PER_SQM_AREA_M2:
             continue
@@ -266,6 +265,8 @@ def summary(dataset, as_of=None):
     return {
         "source_listings": dataset["source_count"],
         "unique_properties": dataset["unique_count"],
+        "classified_properties": sum(row.get("property_type") is not None for row in properties),
+        "classified_house_properties": sum(row.get("property_type") in HOUSE_TYPES for row in properties),
         "duplicate_listings": dataset["duplicate_count"],
         "duplicate_rate": dataset["duplicate_count"] / dataset["source_count"]
         if dataset["source_count"] else 0,

@@ -148,6 +148,8 @@ class DedupTests(unittest.TestCase):
         result = dedup.summary(dedup.deduplicate(rows), as_of="2026-10-25T00:00:00Z")
         self.assertEqual(result["average_asking_house_price_last_12m_eur"], 400000)
         self.assertEqual(result["asking_house_price_last_12m_properties"], 1)
+        self.assertEqual(result["classified_properties"], 3)
+        self.assertEqual(result["classified_house_properties"], 2)
         self.assertEqual(result["average_asking_price_by_plz3_last_12m"][0]["count"], 2)
 
     def test_monthly_median_uses_deduplicated_properties(self):
