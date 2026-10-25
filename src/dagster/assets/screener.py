@@ -10,7 +10,7 @@ import boto3
 from botocore.config import Config
 from botocore.exceptions import ClientError
 from dagster import AssetExecutionContext, MaterializeResult, MetadataValue, asset
-from lakehouse.dedup import annotate_price_per_sqm, deduplicate, removed_cohorts, split_current_and_history, summary
+from lakehouse.dedup import annotate_price_per_sqm, classify_title_property_type, deduplicate, removed_cohorts, split_current_and_history, summary
 from lakehouse.enrichment import PropertyEnricher
 
 
@@ -61,8 +61,8 @@ def _publish_metrics(summary_data, history_data=None, previous_history=None):
         "price_per_sqm_implausible_area_properties": summary_data["price_per_sqm_implausible_area_properties"],
         "price_per_sqm_excluded_properties": summary_data["price_per_sqm_excluded_properties"],
         "new_properties_24h": summary_data["new_properties_24h"],
-        "average_asking_house_price_last_12m_eur": summary_data["average_asking_house_price_last_12m_eur"],
-        "asking_house_price_last_12m_properties": summary_data["asking_house_price_last_12m_properties"],
+        "average_asking_house_price_last_12m_eur": (history_data or summary_data)["average_asking_house_price_last_12m_eur"],
+        "asking_house_price_last_12m_properties": (history_data or summary_data)["asking_house_price_last_12m_properties"],
         "snapshot_timestamp_seconds": datetime.now(timezone.utc).timestamp(),
     }
     lines = [f"lakehouse_screener_{name} {value}" for name, value in metrics.items()
@@ -254,6 +254,13 @@ def screener_silver(context: AssetExecutionContext) -> MaterializeResult:
                "llm_accepted_fact_properties": accepted,
                "listings": dataset["listings"],
                "match_evidence": dataset["match_evidence"]}
+    enriched_types = {row["listing_id"]: row["property_type"] for row in dataset["listings"]
+                      if row.get("property_type")}
+    for row in historical["listings"]:
+        if not row.get("property_type") and row["listing_id"] in enriched_types:
+            row["property_type"] = enriched_types[row["listing_id"]]
+            row["property_type_source"] = "llm_evidence"
+    historical["listings"] = [classify_title_property_type(row) for row in historical["listings"]]
     historical_summary = summary(historical)
     historical_summary["manual_imported_listings"] = len(rows) - len(current_rows)
     dataset["historical_summary"] = historical_summary
@@ -289,9 +296,14 @@ def screener_gold(context: AssetExecutionContext) -> MaterializeResult:
     s3 = _s3()
     silver = json.loads(s3.get_object(Bucket=os.environ["S3_BUCKET"],
         Key=f"silver/screener/date={day}/properties.json")["Body"].read())
+    current_summary = summary(silver)
+    historical_summary = silver.get("historical_summary")
+    if historical_summary:
+        for key in ("average_asking_house_price_last_12m_eur", "asking_house_price_last_12m_properties"):
+            current_summary[key] = historical_summary[key]
     kpis = {"algorithm_version": silver["algorithm_version"],
-            "snapshot_at": silver["snapshot_at"], "summary": summary(silver),
-            "historical_summary": silver.get("historical_summary")}
+            "snapshot_at": silver["snapshot_at"], "summary": current_summary,
+            "historical_summary": historical_summary}
     try:
         previous = json.loads(s3.get_object(Bucket=os.environ["S3_BUCKET"],
             Key="gold/screener/current.json")["Body"].read()).get("historical_summary")
