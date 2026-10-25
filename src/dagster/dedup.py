@@ -21,7 +21,32 @@ REGION_POSTAL_PREFIXES = {
     "Tübingen": {"720"},
     "Stuttgarter Speckgürtel": {str(prefix) for prefix in range(707, 716)},
 }
-HOUSE_TYPES = {"detached_house", "semi_detached_house", "multi_family_house", "terraced_house"}
+HOUSE_TYPES = {"detached_house", "semi_detached_house", "multi_family_house", "terraced_house", "house_unspecified"}
+
+
+def classify_title_property_type(row):
+    """Use explicit listing-title evidence when an imported property's type is missing."""
+    if row.get("property_type"):
+        return row
+    title = (row.get("title") or "").casefold().translate(str.maketrans({
+        "ä": "ae", "ö": "oe", "ü": "ue", "ß": "ss",
+    }))
+    kind = None
+    if re.search(r"\bmehrfamilienhaus\b|\bzweifamilienhaus\b", title):
+        kind = "multi_family_house"
+    elif re.search(r"\bdoppelhaushaelfte\b|\bdoppelhaus\b", title):
+        kind = "semi_detached_house"
+    elif re.search(r"\breihen(?:mittel|end)?haus\b", title):
+        kind = "terraced_house"
+    elif re.search(r"\beinfamilienhaus\b|\bfreistehendes haus\b|\bbungalow\b|\bvilla\b", title):
+        kind = "detached_house"
+    elif not re.search(r"\bwohnung\b|\bapartment\b|\bpenthouse\b|\bmaisonette\b", title) and re.search(r"\bhaus\b|\bhaeuser\b", title):
+        kind = "house_unspecified"
+    if kind:
+        row = row.copy()
+        row["property_type"] = kind
+        row["property_type_source"] = "explicit_title"
+    return row
 
 
 def _text(value):

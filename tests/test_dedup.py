@@ -18,6 +18,28 @@ def row(listing_id, **changes):
 
 
 class DedupTests(unittest.TestCase):
+    def test_manual_house_title_contributes_without_classifying_apartments(self):
+        rows = [
+            row(1, title="Einfamilienhaus mit Garten", manual_import=True, price="300000",
+                first_seen_at="2026-02-01T00:00:00Z"),
+            row(2, title="Wohnung im Haus", manual_import=True, price="200000",
+                first_seen_at="2026-03-01T00:00:00Z"),
+            row(3, title="Reihenhaus", manual_import=False, price="600000",
+                first_seen_at="2026-10-01T00:00:00Z"),
+            row(4, title="Unklarer Altbestand", manual_import=True, price="900000",
+                first_seen_at="2026-04-01T00:00:00Z"),
+        ]
+        active, history = dedup.split_current_and_history(rows)
+        historical = dedup.deduplicate(history)
+        historical["listings"] = [dedup.classify_title_property_type(item)
+                                  for item in historical["listings"]]
+        result = dedup.summary(historical, as_of="2026-10-25T00:00:00Z")
+        self.assertEqual(result["asking_house_price_last_12m_properties"], 2)
+        self.assertEqual(result["average_asking_house_price_last_12m_eur"], 450000)
+        self.assertEqual(len(active), 1)
+        self.assertEqual(next(item for item in historical["listings"]
+                              if item["title"] == "Unklarer Altbestand").get("property_type"), None)
+
     def test_historical_cohort_median_resists_small_area_outlier(self):
         rows = [
             row(1, price="400000", living_area_m2="100", city="A",

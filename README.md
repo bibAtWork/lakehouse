@@ -69,3 +69,11 @@ kubectl -n lakehouse logs deployment/lakehouse-dagster -c daemon
 ```
 
 Dagster is served through the cluster Gateway with Keycloak OIDC and OPA authorization. An encrypted Secret in Edge_GitOps supplies the SeaweedFS credential; CloudNativePG manages the PostgreSQL application credential in a Kubernetes Secret.
+# Market KPI provenance
+
+The 12-month average asking **house** price uses deduplicated current and
+manually imported listing history with a first-seen date inside the last 365
+days. Imported rows without an LLM classification enter this KPI only when
+their title explicitly identifies a house; ambiguous titles and apartments
+remain excluded. The Gold KPI includes both groups, while active-inventory
+counts still exclude manual imports.
